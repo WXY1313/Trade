@@ -1,13 +1,14 @@
 package CPABE
 
 import (
+	"bytes"
 	"crypto/rand"
 	"fmt"
 	"log"
 	"math/big"
 	"strconv"
 
-	"github.com/WXY1313/Trade/LSSS"
+	"github.com/WXY1313/Trade/CPABE/LSSS"
 	"github.com/fentec-project/bn256"
 	"github.com/fentec-project/gofe/abe"
 	"github.com/fentec-project/gofe/sample"
@@ -16,11 +17,10 @@ import (
 type MPK struct {
 	G1      *bn256.G1
 	G2      *bn256.G2
+	U1      *bn256.G1
 	U2      *bn256.G2
 	H1      *bn256.G1
 	H2      *bn256.G2
-	W1      *bn256.G1
-	W2      *bn256.G2
 	AlphaG1 *bn256.G1
 	HXsG1   map[string]*bn256.G1
 	HXsG2   map[string]*bn256.G2
@@ -36,7 +36,7 @@ type CPABE struct {
 }
 
 type SK struct {
-	K   *bn256.G2
+	K   *bn256.G1
 	L   *bn256.G2
 	KXs map[string]*bn256.G2
 }
@@ -46,10 +46,24 @@ type ABECiphertext struct {
 	Com     *bn256.G1         // Com = g1^m
 	MSP     *abe.MSP          // (M, ρ)
 	C       *bn256.G1         //C=h1^m*g1^{alpha*beta}
-	_C      *bn256.G1         //_C=h1^{beta}
+	_C      *bn256.G2         //_C=h2^{beta}
 	C1      map[int]*bn256.G1 //Ci  = w1^{λi}hiG1^{-ri}
 	C2      map[int]*bn256.G1 //Ci' = g1^{ri}
 	C3      map[int]*bn256.G1 //Ci''=g^{λi}
+}
+
+func G1Equal(a, b *bn256.G1) bool {
+	if a == nil || b == nil {
+		return false
+	}
+	return bytes.Equal(a.Marshal(), b.Marshal())
+}
+
+func GTEqual(a, b *bn256.GT) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	return a.String() == b.String()
 }
 
 func NewCPABE() *CPABE {
@@ -63,7 +77,6 @@ func (cpabe *CPABE) Setup() (*MPK, *MSK, error) {
 		attributeUniverse = append(attributeUniverse, "Attr"+strconv.Itoa(i)) // Attr1, Attr2, ..., Attr100
 	}
 	sampler := sample.NewUniformRange(big.NewInt(1), NewCPABE().P)
-	d, _ := sampler.Sample()
 	alpha, _ := sampler.Sample()
 	//The group elements
 	gG1 := new(bn256.G1).ScalarBaseMult(big.NewInt(1))
@@ -73,9 +86,8 @@ func (cpabe *CPABE) Setup() (*MPK, *MSK, error) {
 	hG2 := new(bn256.G2).ScalarBaseMult(h_exponent)
 	alphaG1 := new(bn256.G1).ScalarBaseMult(alpha)
 	u_exponent, _ := sampler.Sample()
+	uG1 := new(bn256.G1).ScalarBaseMult(u_exponent)
 	uG2 := new(bn256.G2).ScalarBaseMult(u_exponent)
-	wG1 := new(bn256.G1).ScalarBaseMult(d)
-	wG2 := new(bn256.G2).ScalarBaseMult(d)
 	//For each x in U: h1x=h1^{rx}, h2x=h2^{rx}
 	hxsG1 := make(map[string]*bn256.G1)
 	hxsG2 := make(map[string]*bn256.G2)
@@ -91,11 +103,10 @@ func (cpabe *CPABE) Setup() (*MPK, *MSK, error) {
 	ABEMPK := &MPK{
 		G1:      gG1,
 		G2:      gG2,
+		U1:      uG1,
 		U2:      uG2,
 		H1:      hG1,
 		H2:      hG2,
-		W1:      wG1,
-		W2:      wG2,
 		AlphaG1: alphaG1,
 		HXsG1:   hxsG1,
 		HXsG2:   hxsG2,
@@ -112,7 +123,7 @@ func (cpabe *CPABE) KeyGen(MPK *MPK, MSK *MSK, su []string) (*SK, error) {
 	//t←Zp,L=g^t
 	sampler := sample.NewUniformRange(big.NewInt(1), MPK.Order)
 	t, _ := sampler.Sample()
-	k := new(bn256.G2).Add(new(bn256.G2).ScalarMult(MPK.U2, MSK.Alpha), new(bn256.G2).ScalarMult(MPK.W2, t))
+	k := new(bn256.G1).Add(new(bn256.G1).ScalarMult(MPK.U1, MSK.Alpha), new(bn256.G1).ScalarMult(MPK.H1, t))
 	l := new(bn256.G2).ScalarMult(MPK.G2, t) //L=g^t
 	//{Kx = hxG2^t}x∈Su
 	kxs := make(map[string]*bn256.G2)
@@ -185,11 +196,12 @@ func (cpabe *CPABE) Encrypt(MPK *MPK, m *big.Int, policy string) (*ABECiphertext
 	//Generate the ABE ciphertext
 	// beta ∈ Zp
 	beta, _ := sampler.Sample()
+	betaInv := new(big.Int).ModInverse(beta, MPK.Order)
 	com := new(bn256.G1).ScalarBaseMult(m)
 	M := bn256.Pair(new(bn256.G1).ScalarMult(MPK.H1, m), MPK.U2)
 
 	c := new(bn256.G1).Add(new(bn256.G1).ScalarMult(MPK.H1, m), new(bn256.G1).ScalarMult(MPK.AlphaG1, beta))
-	_c := new(bn256.G1).ScalarMult(MPK.G1, beta)
+	_c := new(bn256.G2).ScalarMult(MPK.G2, beta)
 
 	//LSSS.Share -> λi = Mi · v，v[0] = beta
 	lambdaMap, err := LSSS.Share(msp, beta, MPK.Order)
@@ -203,11 +215,13 @@ func (cpabe *CPABE) Encrypt(MPK *MPK, m *big.Int, policy string) (*ABECiphertext
 		attri := msp.RowToAttrib[i]
 		HxG1i := MPK.HXsG1[attri]
 		//ci = h^{a*lambdai}*hi^-ri
-		C1Set[i] = new(bn256.G1).Add(new(bn256.G1).ScalarMult(MPK.W1, lambda), new(bn256.G1).Neg(new(bn256.G1).ScalarMult(HxG1i, ri)))
+		C1Set[i] = new(bn256.G1).Add(new(bn256.G1).ScalarMult(MPK.H1, lambda), new(bn256.G1).Neg(new(bn256.G1).ScalarMult(HxG1i, ri)))
 		//ci'=h^ri
 		C2Set[i] = new(bn256.G1).ScalarMult(MPK.G1, ri)
 		//
-		C3Set[i] = new(bn256.G1).ScalarMult(MPK.G1, lambda)
+		result := new(big.Int).Mul(lambda, betaInv)
+		result.Mod(result, MPK.Order)
+		C3Set[i] = new(bn256.G1).ScalarMult(MPK.H1, result)
 	}
 
 	return &ABECiphertext{
@@ -215,12 +229,35 @@ func (cpabe *CPABE) Encrypt(MPK *MPK, m *big.Int, policy string) (*ABECiphertext
 		Com:     com,   // Com = gG1^m
 		MSP:     msp,   // (M, ρ)
 		C:       c,     //C=e(hG1,uG2)^me(hG1,uG2)^{alpha*beta}
-		_C:      _c,    //_C=hG1^{beta}
+		_C:      _c,    //_C=gG2^{beta}
 		C1:      C1Set, //Ci  = h^{a*λi}hiG1^{-ri}
 		C2:      C2Set, //Ci' = hG1^{ri}
 		C3:      C3Set, //Ci''=h^{λi}
 	}, nil
 
+}
+
+func (cpabe *CPABE) CipherCheck(MPK *MPK, CT *ABECiphertext) (bool, error) {
+	R, err := LSSS.ReconG1(CT.MSP, CT.C3, MPK.Order)
+	if !G1Equal(R, MPK.H1) {
+		fmt.Printf("Eq1 no Pass the check!!!")
+		return false, err
+	}
+	if !GTEqual(bn256.Pair(CT.C, MPK.G2), new(bn256.GT).Add(bn256.Pair(CT.Com, MPK.H2), bn256.Pair(MPK.AlphaG1, CT._C))) {
+		fmt.Printf("Eq2 no Pass the check!!!")
+		return false, err
+	}
+	for i, Ci := range CT.C1 {
+		attri := CT.MSP.RowToAttrib[i]
+		HxG2i := MPK.HXsG2[attri]
+		if !GTEqual(bn256.Pair(Ci, MPK.G2), new(bn256.GT).Add(bn256.Pair(CT.C3[i], CT._C), bn256.Pair(new(bn256.G1).Neg(CT.C2[i]), HxG2i))) {
+			//if !GTEqual(bn256.Pair(CT.C3[i], CT._C), bn256.Pair(CT.C4[i], MPK.H2)) {
+			fmt.Printf("Eq3 no Pass the check!!!")
+			return false, err
+		}
+	}
+	fmt.Printf("Pass the check!!!")
+	return true, err
 }
 
 func (cpabe *CPABE) Decrypt(MPK *MPK, CT *ABECiphertext, SK *SK) (*bn256.GT, error) {
@@ -238,11 +275,11 @@ func (cpabe *CPABE) Decrypt(MPK *MPK, CT *ABECiphertext, SK *SK) (*bn256.GT, err
 		}
 	}
 	//R ← LSSS.Recon({ ˜Ri}i∈I , τ )
-	A, err := LSSS.Recon(CT.MSP, ASet, p)
+	A, err := LSSS.ReconGT(CT.MSP, ASet, p)
 	if err != nil {
 		log.Fatalf("Fail to execute LSSSRecon ,Error: %v", err)
 	}
-	A = new(bn256.GT).Add(bn256.Pair(CT._C, SK.K), new(bn256.GT).Neg(A))
+	A = new(bn256.GT).Add(bn256.Pair(SK.K, CT._C), new(bn256.GT).Neg(A))
 	M := new(bn256.GT).Add(bn256.Pair(CT.C, MPK.U2), new(bn256.GT).Neg(A))
 	return M, nil
 }

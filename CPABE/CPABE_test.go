@@ -5,17 +5,9 @@ import (
 	"strconv"
 	"testing"
 
-	"github.com/fentec-project/bn256"
 	"github.com/fentec-project/gofe/sample"
 	"github.com/stretchr/testify/require"
 )
-
-func gtEqual(a, b *bn256.GT) bool {
-	if a == nil || b == nil {
-		return a == nil && b == nil
-	}
-	return a.String() == b.String()
-}
 
 func TestAll(t *testing.T) {
 	//Setup
@@ -42,9 +34,13 @@ func TestAll(t *testing.T) {
 		return
 	}
 
+	//CipherCheck
+	resultCipher, _ := cpabe.CipherCheck(MPK, ABECT)
+	t.Logf("CipherCheck Result : %v", resultCipher)
+
 	//Decrypt
 	recoverMessage, err := cpabe.Decrypt(MPK, ABECT, SK)
-	if !gtEqual(ABECT.Message, recoverMessage) {
+	if !GTEqual(ABECT.Message, recoverMessage) {
 		t.Fatalf("decryption failed: Kθ mismatch\noriginal: %v\nrecovered: %v",
 			ABECT.Message, recoverMessage)
 	}
