@@ -70,7 +70,8 @@ func PVGSSShare(s *big.Int, matrix [][]*big.Int, PK []*bn256.G1) ([]*bn256.G1, *
 	return C, prfs, nil
 }
 
-func PVGSSVerify(C []*bn256.G1, prfs *Prf, invmatrix0, invmatrix1 [][]*big.Int, PK []*bn256.G1, I0, I1 []int) (bool, error) {
+func PVGSSVerify(C []*bn256.G1, prfs *Prf, invmatrix [][]*big.Int, PK []*bn256.G1, I []int) (bool, error) {
+	//Check exponet consistency
 	for i := 0; i < len(C); i++ {
 		left := prfs.Cp[i]
 		temp1 := new(bn256.G1).ScalarMult(C[i], prfs.Xc)
@@ -80,25 +81,8 @@ func PVGSSVerify(C []*bn256.G1, prfs *Prf, invmatrix0, invmatrix1 [][]*big.Int, 
 			return false, fmt.Errorf("check nizk proof fails")
 		}
 	}
-	// Alice and Bob
-	// I0 := make([]int, len(invmatrix0))
-	// for i := 0; i < len(invmatrix0); i++ {
-	// 	I0[0] = i
-	// }
-	recoverShat, err := LSSS.LSSSRecon(invmatrix0, prfs.Shatarry, I0)
-	if err != nil {
-		return false, fmt.Errorf("GSSRecon fails")
-	}
-	if prfs.Shat.Cmp(recoverShat) != 0 {
-		return false, fmt.Errorf("reconstruct shat dont match")
-	}
-	// Alice and Watchers
-	// I1 := make([]int, len(invmatrix1))
-	// I1[0] = 0
-	// for i := 0; i < len(invmatrix1); i++ {
-	// 	I1[i+1] = i + 2
-	// }
-	recoverShat, err = LSSS.LSSSRecon(invmatrix1, prfs.Shatarry, I1)
+
+	recoverShat, err := LSSS.LSSSRecon(invmatrix, prfs.Shatarry, I)
 	if err != nil {
 		return false, fmt.Errorf("GSSRecon fails")
 	}
