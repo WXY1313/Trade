@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"testing"
 
+	"github.com/WXY1313/Trade/CPABE"
 	"github.com/stretchr/testify/require"
 )
 
@@ -30,7 +31,7 @@ func TestAll(t *testing.T) {
 
 	//Encrypt
 	Mes := "Secret"
-	policy := GeneratePolicy(5)
+	policy := CPABE.GeneratePolicy(5)
 	CT, err := fsac.Encrypt(MPK, Mes, policy)
 	if err != nil {
 		t.Errorf("fail to generate ABE ciphertext")

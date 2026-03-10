@@ -2,16 +2,13 @@ package FSAC
 
 import (
 	"bytes"
-	"crypto/rand"
-	"crypto/sha256"
-	"crypto/subtle"
-	"encoding/binary"
 	"fmt"
 	"log"
 	"math/big"
 	"strconv"
 
 	"github.com/WXY1313/Trade/CPABE/LSSS"
+	"github.com/WXY1313/Trade/SymEnc"
 	"github.com/fentec-project/bn256"
 	"github.com/fentec-project/gofe/abe"
 	"github.com/fentec-project/gofe/sample"
@@ -62,84 +59,11 @@ func NewFSAC() *FSAC {
 	return &FSAC{P: bn256.Order}
 }
 
-// Generate an access structure
-func GeneratePolicy(attrCount int) string {
-
-	attrs := make([]string, attrCount)
-	for i := 0; i < attrCount; i++ {
-		attrs[i] = "Attr" + strconv.Itoa(i+1)
+func GTEqual(a, b *bn256.GT) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
 	}
-
-	randInt := func(n int) int {
-		r, _ := rand.Int(rand.Reader, big.NewInt(int64(n)))
-		return int(r.Int64())
-	}
-
-	for i := attrCount - 1; i > 0; i-- {
-		j := randInt(i + 1)
-		attrs[i], attrs[j] = attrs[j], attrs[i]
-	}
-
-	var build func([]string) string
-	build = func(list []string) string {
-
-		if len(list) == 1 {
-			return list[0]
-		}
-
-		op := "AND"
-		if randInt(2) == 0 {
-			op = "OR"
-		}
-
-		split := randInt(len(list)-1) + 1 // [1, len-1]
-		left := build(list[:split])
-		right := build(list[split:])
-
-		return "(" + left + " " + op + " " + right + ")"
-	}
-
-	policy := build(attrs)
-
-	if len(policy) > 2 && policy[0] == '(' && policy[len(policy)-1] == ')' {
-		policy = policy[1 : len(policy)-1]
-	}
-
-	return policy
-}
-
-// PRG expands seed K into outLen bytes using:
-// PRG(K) = H(K||1) || H(K||2) || ... until length >= outLen
-func PRG(K *bn256.GT, outLen int) []byte {
-	if outLen <= 0 {
-		return []byte{}
-	}
-
-	// 1️⃣ Canonical serialization
-	kBytes := K.Marshal()
-
-	hashLen := sha256.Size
-	n := (outLen + hashLen - 1) / hashLen
-
-	result := make([]byte, 0, n*hashLen)
-
-	for counter := uint32(1); counter <= uint32(n); counter++ {
-		h := sha256.New()
-
-		// domain separation
-		h.Write([]byte("PRG_GT"))
-
-		h.Write(kBytes)
-
-		var ctrBytes [4]byte
-		binary.BigEndian.PutUint32(ctrBytes[:], counter)
-		h.Write(ctrBytes[:])
-
-		block := h.Sum(nil)
-		result = append(result, block...)
-	}
-
-	return result[:outLen]
+	return a.String() == b.String()
 }
 
 func G1Equal(a, b *bn256.G1) bool {
@@ -147,13 +71,6 @@ func G1Equal(a, b *bn256.G1) bool {
 		return false
 	}
 	return bytes.Equal(a.Marshal(), b.Marshal())
-}
-
-func GTEqual(a, b *bn256.GT) bool {
-	if a == nil || b == nil {
-		return a == nil && b == nil
-	}
-	return a.String() == b.String()
 }
 
 func (fsac *FSAC) Setup() (*MPK, *bn256.G1, error) {
@@ -235,8 +152,7 @@ func (fsac *FSAC) Encrypt(MPK *MPK, Mes string, policy string) (*FSACCiphertext,
 	//Generate the ABE ciphertext
 	k, _ := sampler.Sample()
 	K := new(bn256.GT).ScalarBaseMult(k)
-	ct := make([]byte, len([]byte(Mes)))
-	subtle.XORBytes(ct, []byte(Mes), PRG(K, len([]byte(Mes))))
+	ct := SymEnc.XOREncryptDecrypt([]byte(Mes), SymEnc.KDF(K))
 	fmt.Printf("CT=%v\n", string(ct))
 
 	s, _ := sampler.Sample()
@@ -310,8 +226,7 @@ func (fsac *FSAC) Santize(MPK *MPK, Key *Key, CT *FSACCiphertext) ([]byte, *VKey
 	sampler := sample.NewUniformRange(big.NewInt(1), MPK.Order)
 	_k, _ := sampler.Sample()
 	_K := new(bn256.GT).ScalarBaseMult(_k)
-	sanCT := make([]byte, len(CT.CT))
-	subtle.XORBytes(sanCT, CT.CT, PRG(_K, len(CT.CT)))
+	sanCT := SymEnc.XOREncryptDecrypt(CT.CT, SymEnc.KDF(_K))
 	b, _ := sampler.Sample()
 	v0 := new(bn256.GT).ScalarBaseMult(b)
 	v1 := new(bn256.GT).Add(_K, new(bn256.GT).ScalarMult(Key.PK, b))
@@ -338,9 +253,7 @@ func (fsac *FSAC) Decrypt(MPK *MPK, CT *FSACCiphertext, SK *SK, VKey *VKey, Key 
 	A = new(bn256.GT).Add(bn256.Pair(SK.K, CT._C), new(bn256.GT).Neg(A))
 	K := new(bn256.GT).Add(CT.C, new(bn256.GT).Neg(A))
 	_K := new(bn256.GT).Add(VKey.V1, new(bn256.GT).Neg(new(bn256.GT).ScalarMult(VKey.V0, Key.SK)))
-	temp := make([]byte, len(ct))
-	subtle.XORBytes(temp, ct, PRG(K, len(ct)))
-	_Mes := make([]byte, len(ct))
-	subtle.XORBytes(_Mes, temp, PRG(_K, len(ct)))
+	temp := SymEnc.XOREncryptDecrypt(ct, SymEnc.KDF(K))
+	_Mes := SymEnc.XOREncryptDecrypt(temp, SymEnc.KDF(_K))
 	return string(_Mes), nil
 }
