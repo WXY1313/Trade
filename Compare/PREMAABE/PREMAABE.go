@@ -506,8 +506,12 @@ func ReEncrypt(pp *PP, rk *ReKey, ct *Cipher) (*ReCipher, error) {
 
 	aToK := make(map[string]*AttrKey)
 	for i := 0; i < len(rk.Attr); i++ {
-		aToK[rk.Attr[i]].EK1 = rk.RK3[i]
-		aToK[rk.Attr[i]].EK2 = rk.RK4[i]
+		attrName := rk.Attr[i]
+		if aToK[attrName] == nil {
+			aToK[attrName] = &AttrKey{}
+		}
+		aToK[attrName].EK1 = rk.RK3[i]
+		aToK[attrName].EK2 = rk.RK4[i]
 	}
 	for i, at := range ct.Msp.RowToAttrib {
 		if aToK[at] != nil {
@@ -539,11 +543,11 @@ func ReEncrypt(pp *PP, rk *ReKey, ct *Cipher) (*ReCipher, error) {
 	eggLambda := make(map[string]*bn256.GT)
 	for _, at := range goodAttribs {
 		if ct.C1x[at] != nil && ct.C2x[at] != nil && ct.C3x[at] != nil && ct.C4x[at] != nil {
-			num := new(bn256.GT).Add(new(bn256.GT).ScalarMult(ct.C1x[at], rk.RK1), bn256.Pair(ct.C2x[at], aToK[at].EK1))
-			num = new(bn256.GT).Add(num, bn256.Pair(new(bn256.G1).ScalarMult(ct.C3x[at], rk.RK1), hash))
-			num = new(bn256.GT).Add(num, bn256.Pair(new(bn256.G1).Neg(ct.C4x[at]), aToK[at].EK2))
-			num = new(bn256.GT).Add(num, bn256.Pair(rk.RK2, ct.C5x[at]))
-			eggLambda[at] = num
+			numUp := new(bn256.GT).Add(new(bn256.GT).ScalarMult(ct.C1x[at], rk.RK1), bn256.Pair(ct.C2x[at], aToK[at].EK1))
+			numUp = new(bn256.GT).Add(numUp, bn256.Pair(new(bn256.G1).ScalarMult(ct.C3x[at], rk.RK1), hash))
+			numBottom := bn256.Pair(new(bn256.G1).Neg(ct.C4x[at]), aToK[at].EK2)
+			numBottom = new(bn256.GT).Add(numBottom, bn256.Pair(rk.RK2, ct.C5x[at]))
+			eggLambda[at] = new(bn256.GT).Add(numUp, new(bn256.GT).Neg(numBottom))
 		} else {
 			fmt.Println(ct.C1x[at] != nil, ct.C2x[at] != nil, ct.C3x[at] != nil, ct.C4x[at] != nil)
 			return nil, fmt.Errorf("attribute %s not in ciphertext dicts", at)
@@ -646,7 +650,7 @@ func ReDecrypt(pp *PP, ak []*AttrKey, edk *EDK, recipher *ReCipher) (string, err
 	}
 	// calculate key for symmetric encryption
 	Delta := new(bn256.GT).Add(edk.C0, new(bn256.GT).Neg(eggs))
-	hash1 := HashGTToBigInt(new(bn256.GT).Add(edk.C0, new(bn256.GT).Neg(Delta)))
+	hash1 := HashGTToBigInt(Delta)
 	hash1 = hash1.Div(big.NewInt(int64(1)), hash1)
 	hash1.Mod(hash1, bn256.Order)
 	symKey := new(bn256.GT).Add(recipher.RC2, new(bn256.GT).Neg(new(bn256.GT).ScalarMult(recipher.RC1, hash1)))

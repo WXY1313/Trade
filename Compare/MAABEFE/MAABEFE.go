@@ -9,10 +9,10 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/WXY1313/Trade/MAABE"
 	"github.com/WXY1313/Trade/SymEnc"
 	"github.com/fentec-project/bn256"
 	"github.com/fentec-project/gofe/abe"
+	lib "github.com/fentec-project/gofe/abe"
 	"github.com/fentec-project/gofe/data"
 	"github.com/fentec-project/gofe/sample"
 	"golang.org/x/crypto/sha3"
@@ -126,6 +126,41 @@ func BigIntEqual(a, b *big.Int) bool {
 func RandomInt() *big.Int {
 	v, _ := data.NewRandomVector(1, sample.NewUniform(bn256.Order))
 	return v[0]
+}
+
+func LSSSRecon(msp *lib.MSP, idToShare map[string]*big.Int) (*big.Int, error) {
+	goodMatRows := make([]data.Vector, 0)
+	goodHolders := make([]string, 0)
+
+	for i, id := range msp.RowToAttrib {
+		if idToShare[id] != nil {
+			goodMatRows = append(goodMatRows, msp.Mat[i])
+			goodHolders = append(goodHolders, id)
+		}
+	}
+	goodMat, err := data.NewMatrix(goodMatRows)
+	if err != nil {
+		return nil, err
+	}
+
+	//choose consts c_x, such that \sum c_x A_x = (1,0,...,0)
+	// if they don't exist, holders are not ok
+	goodCols := goodMat.Cols()
+	if goodCols == 0 {
+		return nil, fmt.Errorf("no good matrix columns")
+	}
+	one := data.NewConstantVector(goodCols, big.NewInt(0))
+	one[0] = big.NewInt(1)
+	c, err := data.GaussianEliminationSolver(goodMat.Transpose(), one, bn256.Order)
+	if err != nil {
+		return nil, err
+	}
+	s := big.NewInt(0)
+	for i, id := range goodHolders {
+		s.Add(s, new(big.Int).Mul(c[i], idToShare[id]))
+	}
+	s.Mod(s, bn256.Order)
+	return s, nil
 }
 
 // MAABE represents a MAABE scheme.
@@ -559,11 +594,14 @@ func CheckCipher(pp *PP, cipher *Cipher, cipherNIZK *NIZKCipher, pkSet []*AuthPK
 
 		}
 	}
-
-	lambdaVector := MapToVector(cipherNIZK.Lambda)
-	fmt.Printf("LambdaVector=%v\n", lambdaVector)
-	reconVector, _ := data.GaussianEliminationSolver(cipher.Msp.Mat.Transpose(), lambdaVector, bn256.Order)
-	fmt.Printf("reconVector=%v\n", reconVector)
+	lambdaRecon, _ := LSSSRecon(cipher.Msp, cipherNIZK.Lambda)
+	omegaRecon, _ := LSSSRecon(cipher.Msp, cipherNIZK.Omega)
+	if !BigIntEqual(lambdaRecon, cipherNIZK.S) {
+		return false
+	}
+	if !BigIntEqual(omegaRecon, big.NewInt(int64(0))) {
+		return false
+	}
 
 	return true
 }
@@ -609,7 +647,7 @@ func Decrypt(pp *PP, ct *Cipher, akSet []*AttrKey) (string, error) {
 	}
 	one := data.NewConstantVector(goodCols, big.NewInt(0))
 	one[0] = big.NewInt(1)
-	c, err := data.GaussianEliminationSolver(goodMat.Transpose(), one, MAABE.NewMAABE().P)
+	c, err := data.GaussianEliminationSolver(goodMat.Transpose(), one, bn256.Order)
 	if err != nil {
 		return "", err
 	}
