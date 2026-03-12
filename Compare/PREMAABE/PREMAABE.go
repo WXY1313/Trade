@@ -651,9 +651,11 @@ func ReDecrypt(pp *PP, ak []*AttrKey, edk *EDK, recipher *ReCipher) (string, err
 	// calculate key for symmetric encryption
 	Delta := new(bn256.GT).Add(edk.C0, new(bn256.GT).Neg(eggs))
 	hash1 := HashGTToBigInt(Delta)
-	hash1 = hash1.Div(big.NewInt(int64(1)), hash1)
-	hash1.Mod(hash1, bn256.Order)
-	symKey := new(bn256.GT).Add(recipher.RC2, new(bn256.GT).Neg(new(bn256.GT).ScalarMult(recipher.RC1, hash1)))
+	hashInv := new(big.Int).ModInverse(hash1, bn256.Order)
+	if hashInv == nil {
+		return "", fmt.Errorf("failed to compute modular inverse for H1 hash")
+	}
+	symKey := new(bn256.GT).Add(recipher.RC2, new(bn256.GT).Neg(new(bn256.GT).ScalarMult(recipher.RC1, hashInv)))
 	msg := SymEnc.XOREncryptDecrypt(recipher.Ciphertext, SymEnc.KDF(symKey))
 	fmt.Println(string(msg))
 	return string(msg), nil

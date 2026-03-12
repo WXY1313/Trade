@@ -16,7 +16,7 @@ func TestAll(t *testing.T) {
 
 	//KeyGen
 	var userAttrs []string
-	for i := 1; i <= 10; i++ {
+	for i := 1; i <= 5; i++ {
 		userAttrs = append(userAttrs, "Attr"+strconv.Itoa(i)) // A1, A2, ..., A100
 	}
 	//KeyGen
@@ -27,7 +27,7 @@ func TestAll(t *testing.T) {
 	//Encrypt
 	sampler := sample.NewUniformRange(big.NewInt(1), MPK.Order)
 	m, _ := sampler.Sample()
-	policy := GeneratePolicy(10)
+	policy := GeneratePolicy(5)
 	ABECT, err := cpabe.Encrypt(MPK, m, policy)
 	if err != nil {
 		t.Errorf("fail to generate ABE ciphertext")

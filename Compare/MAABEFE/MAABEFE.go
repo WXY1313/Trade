@@ -303,22 +303,22 @@ type NIZKCipher struct {
 func Encrypt(pp *PP, m *big.Int, msg string, msp *abe.MSP, pkSet []*AuthPK) (*Cipher, *NIZKCipher, error) {
 	sampler := sample.NewUniform(pp.P)
 	// sanity checks
-	// if len(msp.Mat) == 0 || len(msp.Mat[0]) == 0 {
-	// 	return nil, nil, fmt.Errorf("empty msp matrix")
-	// }
+	if len(msp.Mat) == 0 || len(msp.Mat[0]) == 0 {
+		return nil, nil, fmt.Errorf("empty msp matrix")
+	}
 	mspRows := msp.Mat.Rows()
 	mspCols := msp.Mat.Cols()
-	// attribs := make(map[string]bool)
-	// for _, i := range msp.RowToAttrib {
-	// 	if attribs[i] {
-	// 		return nil, nil, fmt.Errorf("some attributes correspond to" +
-	// 			"multiple rows of the MSP struct, the scheme is not secure")
-	// 	}
-	// 	attribs[i] = true
-	// }
-	// if len(msg) == 0 {
-	// 	return nil, nil, fmt.Errorf("message cannot be empty")
-	// }
+	attribs := make(map[string]bool)
+	for _, i := range msp.RowToAttrib {
+		if attribs[i] {
+			return nil, nil, fmt.Errorf("some attributes correspond to" +
+				"multiple rows of the MSP struct, the scheme is not secure")
+		}
+		attribs[i] = true
+	}
+	if len(msg) == 0 {
+		return nil, nil, fmt.Errorf("message cannot be empty")
+	}
 	// msg is encrypted with AES-CBC with a random key that is encrypted with
 	// MA-ABE
 	// generate secret key
@@ -378,9 +378,9 @@ func Encrypt(pp *PP, m *big.Int, msg string, msp *abe.MSP, pkSet []*AuthPK) (*Ci
 	for i, at := range msp.RowToAttrib {
 		r[at] = rI[i]
 	}
-	// if err != nil {
-	// 	return nil, nil, err
-	// }
+	if err != nil {
+		return nil, nil, err
+	}
 	for _, at := range msp.RowToAttrib {
 		// find the correct pubkey
 		//foundPK := false
@@ -602,7 +602,6 @@ func CheckCipher(pp *PP, cipher *Cipher, cipherNIZK *NIZKCipher, pkSet []*AuthPK
 	if !BigIntEqual(omegaRecon, big.NewInt(int64(0))) {
 		return false
 	}
-
 	return true
 }
 

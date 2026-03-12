@@ -18,7 +18,7 @@ type Node struct {
 
 func NewNode(IsLeaf bool, num int, T int, idx *big.Int) *Node {
 	return &Node{
-		IsLeaf:      IsLeaf,
+		IsLeaf:      IsLeaf, 
 		Children:    []*Node{},
 		Childrennum: num,
 		T:           T,
@@ -101,13 +101,8 @@ func LSSSShare(s *big.Int, matrix [][]*big.Int) ([]*big.Int, error) {
 }
 
 func LSSSRecon(invRecMatrix [][]*big.Int, shares []*big.Int, I []int) (*big.Int, error) {
-	// matrix := Convert(AA)
+	
 	rows := len(I)
-	// recMatrix := make([][]*big.Int, rows)
-	// for i := 0; i < len(I); i++ {
-	// 	recMatrix[i] = matrix[I[i]][:rows]
-	// }
-	// invRecMatrix, _ := GaussJordanInverse(recMatrix)
 	one := make([][]*big.Int, 1)
 	one[0] = make([]*big.Int, rows)
 	for i := 0; i < rows; i++ {

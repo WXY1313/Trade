@@ -8,7 +8,7 @@ import (
 	"math/big"
 	"strconv"
 
-	"github.com/WXY1313/Trade/CPABE/LSSS"
+	"github.com/WXY1313/Trade/CPABE/CPABE/LSSS"
 	"github.com/fentec-project/bn256"
 	"github.com/fentec-project/gofe/abe"
 	"github.com/fentec-project/gofe/sample"
@@ -135,9 +135,7 @@ func (cpabe *CPABE) KeyGen(MPK *MPK, MSK *MSK, su []string) (*SK, error) {
 		}
 		kxs[su[i]] = new(bn256.G2).ScalarMult(MPK.HXsG2[su[i]], t)
 	}
-
 	return &SK{K: k, L: l, KXs: kxs}, nil
-
 }
 
 // Generate an access structure
@@ -193,6 +191,8 @@ func (cpabe *CPABE) Encrypt(MPK *MPK, m *big.Int, policy string) (*ABECiphertext
 	C3Set := make(map[int]*bn256.G1)
 	//Parse the access policy
 	msp, _ := abe.BooleanToMSP(policy, false)
+	fmt.Printf("Policy=%v\n", policy)
+	fmt.Printf("MSP=%v\n", msp)
 	//Generate the ABE ciphertext
 	// beta ∈ Zp
 	beta, _ := sampler.Sample()
@@ -223,7 +223,7 @@ func (cpabe *CPABE) Encrypt(MPK *MPK, m *big.Int, policy string) (*ABECiphertext
 		result.Mod(result, MPK.Order)
 		C3Set[i] = new(bn256.G1).ScalarMult(MPK.H1, result)
 	}
-
+	fmt.Printf("C1Set=%v\n", C1Set)
 	return &ABECiphertext{
 		Message: M,
 		Com:     com,   // Com = gG1^m

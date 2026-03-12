@@ -12,7 +12,7 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestMAABE(t *testing.T) {
+func TestMAABEFE(t *testing.T) {
 	// create new MAABE struct with Global Parameters
 	_, gt, _ := bn256.RandomGT(rand.Reader)
 	SymEnc.KDF(gt)

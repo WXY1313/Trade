@@ -45,7 +45,7 @@ func TestLSSSCompleteFlow(t *testing.T) {
 	}
 
 	// 4. 测试 LSSSRecon：重构秘密
-	reconstructed, err := Recon(msp, shares, p)
+	reconstructed, err := ReconGT(msp, shares, p)
 	require.NoError(t, err, "重构秘密时出错")
 	require.NotNil(t, reconstructed, "重构结果不应为nil")
 
