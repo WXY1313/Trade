@@ -5,7 +5,7 @@ import (
 	"strconv"
 	"testing"
 
-	"github.com/WXY1313/Trade/CPABE"
+	"github.com/WXY1313/Trade/Crypto/CPABE"
 	"github.com/stretchr/testify/require"
 )
 

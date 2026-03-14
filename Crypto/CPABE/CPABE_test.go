@@ -1,6 +1,7 @@
 package CPABE
 
 import (
+	"fmt"
 	"math/big"
 	"strconv"
 	"testing"
@@ -11,8 +12,7 @@ import (
 
 func TestAll(t *testing.T) {
 	//Setup
-	cpabe := NewCPABE()
-	MPK, MSK, err := cpabe.Setup()
+	MPK, MSK, err := Setup()
 
 	//KeyGen
 	var userAttrs []string
@@ -20,7 +20,7 @@ func TestAll(t *testing.T) {
 		userAttrs = append(userAttrs, "Attr"+strconv.Itoa(i)) // A1, A2, ..., A100
 	}
 	//KeyGen
-	SK, err := cpabe.KeyGen(MPK, MSK, userAttrs)
+	SK, err := KeyGen(MPK, MSK, userAttrs)
 	require.NoError(t, err)
 	require.NotNil(t, SK)
 
@@ -28,18 +28,20 @@ func TestAll(t *testing.T) {
 	sampler := sample.NewUniformRange(big.NewInt(1), MPK.Order)
 	m, _ := sampler.Sample()
 	policy := GeneratePolicy(5)
-	ABECT, err := cpabe.Encrypt(MPK, m, policy)
+	ABECT, err := Encrypt(MPK, m, policy)
 	if err != nil {
 		t.Errorf("fail to generate ABE ciphertext")
 		return
 	}
 
 	//CipherCheck
-	resultCipher, _ := cpabe.CipherCheck(MPK, ABECT)
-	t.Logf("CipherCheck Result : %v", resultCipher)
+	resultCipher := CipherCheck(MPK, ABECT)
+	fmt.Printf("CipherCheck Result : %v\n", resultCipher)
+
+	// create new MAABE struct with Global Parameters
 
 	//Decrypt
-	recoverMessage, err := cpabe.Decrypt(MPK, ABECT, SK)
+	recoverMessage, err := Decrypt(MPK, ABECT, SK)
 	if !GTEqual(ABECT.Message, recoverMessage) {
 		t.Fatalf("decryption failed: Kθ mismatch\noriginal: %v\nrecovered: %v",
 			ABECT.Message, recoverMessage)

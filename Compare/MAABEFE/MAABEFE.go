@@ -1,7 +1,6 @@
 package MAABEFE
 
 import (
-	"bytes"
 	"crypto/sha256"
 	"fmt"
 	"hash"
@@ -9,7 +8,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/WXY1313/Trade/SymEnc"
+	"github.com/WXY1313/Trade/Crypto/Operation"
+	"github.com/WXY1313/Trade/Crypto/SymEnc"
 	"github.com/fentec-project/bn256"
 	"github.com/fentec-project/gofe/abe"
 	lib "github.com/fentec-project/gofe/abe"
@@ -36,18 +36,6 @@ func HashG2(pp *PP, msg string) *bn256.G2 {
 	return new(bn256.G2).ScalarMult(pp.G2, new(big.Int).SetBytes(v))
 }
 
-func writeMapG1(h hash.Hash, m map[string]*bn256.G1) {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-
-	for _, k := range keys {
-		h.Write(m[k].Marshal())
-	}
-}
-
 func writeMapGT(h hash.Hash, m map[string]*bn256.GT) {
 	keys := make([]string, 0, len(m))
 	for k := range m {
@@ -60,23 +48,16 @@ func writeMapGT(h hash.Hash, m map[string]*bn256.GT) {
 	}
 }
 
-func MapToVector(m map[string]*big.Int) data.Vector {
-
+func writeMapG1(h hash.Hash, m map[string]*bn256.G1) {
 	keys := make([]string, 0, len(m))
 	for k := range m {
 		keys = append(keys, k)
 	}
-
-	// 排序保证顺序固定
 	sort.Strings(keys)
 
-	vec := make(data.Vector, len(keys))
-
-	for i, k := range keys {
-		vec[i] = m[k]
+	for _, k := range keys {
+		h.Write(m[k].Marshal())
 	}
-
-	return vec
 }
 
 func G1ArrayToBigInt(cm *CM, _cm *CM, _dm *bn256.G1) *big.Int {
@@ -103,29 +84,6 @@ func G1ArrayToBigInt(cm *CM, _cm *CM, _dm *bn256.G1) *big.Int {
 
 	x := new(big.Int).SetBytes(h.Sum(nil))
 	return x.Mod(x, bn256.Order)
-}
-
-func GTEqual(a, b *bn256.GT) bool {
-	if a == nil || b == nil {
-		return a == nil && b == nil
-	}
-	return a.String() == b.String()
-}
-
-func G1Equal(a, b *bn256.G1) bool {
-	if a == nil || b == nil {
-		return false
-	}
-	return bytes.Equal(a.Marshal(), b.Marshal())
-}
-
-func BigIntEqual(a, b *big.Int) bool {
-	return a.Cmp(b) == 0 // 如果 a 和 b 相等，返回 true
-}
-
-func RandomInt() *big.Int {
-	v, _ := data.NewRandomVector(1, sample.NewUniform(bn256.Order))
-	return v[0]
 }
 
 func LSSSRecon(msp *lib.MSP, idToShare map[string]*big.Int) (*big.Int, error) {
@@ -218,8 +176,8 @@ type Auth struct {
 // procedure an error is returned.
 func AuthSetup(pp *PP, id string) (*Auth, error) {
 	//v, _ := data.NewRandomVector(2, sample.NewUniform(a.P))
-	alpha := RandomInt()
-	beta := RandomInt()
+	alpha := Operation.RandomInt()
+	beta := Operation.RandomInt()
 	sk := &AuthSK{Alpha: alpha, Beta: beta}
 	//todo check GTOAlpha G2TOAlpha
 	pk := &AuthPK{ID: id, AlphaGT: new(bn256.GT).ScalarMult(pp.GT, alpha), BetaG1: new(bn256.G1).ScalarMult(pp.G1, beta)}
@@ -243,7 +201,7 @@ type AttrKey struct {
 
 // ABEKeygen generates a key for the given attribute
 func KeyGen(pp *PP, gid string, auth *Auth, at string) (*AttrKey, error) {
-	var alpha, beta, d = auth.SK.Alpha, auth.SK.Beta, RandomInt()
+	var alpha, beta, d = auth.SK.Alpha, auth.SK.Beta, Operation.RandomInt()
 	var pt = pp.G2 //new(bn256.G1).Set(auth.Maabe.G1)
 	// sanity checks
 	if len(gid) == 0 {
@@ -562,32 +520,32 @@ func Encrypt(pp *PP, m *big.Int, msg string, msp *abe.MSP, pkSet []*AuthPK) (*Ci
 func CheckCipher(pp *PP, cipher *Cipher, cipherNIZK *NIZKCipher, pkSet []*AuthPK) bool {
 	challenge := G1ArrayToBigInt(cipher.CM, cipherNIZK.CM, cipherNIZK.DM)
 	fmt.Printf("Challenge=%v\n", challenge)
-	if !G1Equal(cipherNIZK.CM.C0, new(bn256.G1).Add(new(bn256.G1).Add(new(bn256.G1).ScalarBaseMult(cipherNIZK.S), new(bn256.G1).ScalarBaseMult(cipherNIZK.M)), new(bn256.G1).ScalarMult(cipher.CM.C0, challenge))) {
+	if !Operation.G1Equal(cipherNIZK.CM.C0, new(bn256.G1).Add(new(bn256.G1).Add(new(bn256.G1).ScalarBaseMult(cipherNIZK.S), new(bn256.G1).ScalarBaseMult(cipherNIZK.M)), new(bn256.G1).ScalarMult(cipher.CM.C0, challenge))) {
 		return false
 	}
-	if !G1Equal(cipherNIZK.CM.C5, new(bn256.G1).Add(new(bn256.G1).ScalarMult(pp.H1, cipherNIZK.S), new(bn256.G1).ScalarMult(cipher.CM.C5, challenge))) {
+	if !Operation.G1Equal(cipherNIZK.CM.C5, new(bn256.G1).Add(new(bn256.G1).ScalarMult(pp.H1, cipherNIZK.S), new(bn256.G1).ScalarMult(cipher.CM.C5, challenge))) {
 		return false
 	}
-	if !G1Equal(cipherNIZK.DM, new(bn256.G1).Add(new(bn256.G1).ScalarMult(pp.H1, cipherNIZK.M), new(bn256.G1).ScalarMult(cipher.DM, challenge))) {
+	if !Operation.G1Equal(cipherNIZK.DM, new(bn256.G1).Add(new(bn256.G1).ScalarMult(pp.H1, cipherNIZK.M), new(bn256.G1).ScalarMult(cipher.DM, challenge))) {
 		return false
 	}
-	if !GTEqual(bn256.Pair(cipher.CM.C0, pp.H2), bn256.Pair(new(bn256.G1).Add(cipher.CM.C5, cipher.DM), pp.G2)) {
+	if !Operation.GTEqual(bn256.Pair(cipher.CM.C0, pp.H2), bn256.Pair(new(bn256.G1).Add(cipher.CM.C5, cipher.DM), pp.G2)) {
 		return false
 	}
 	for _, at := range cipher.Msp.RowToAttrib {
 		for _, pk := range pkSet {
 			if strings.Split(at, ":")[0] == pk.ID {
-				if !GTEqual(cipherNIZK.CM.C1x[at], new(bn256.GT).Add(new(bn256.GT).Add(new(bn256.GT).ScalarMult(pp.GT, cipherNIZK.Lambda[at]), new(bn256.GT).ScalarMult(pk.AlphaGT, cipherNIZK.R[at])), new(bn256.GT).ScalarMult(cipher.CM.C1x[at], challenge))) {
+				if !Operation.GTEqual(cipherNIZK.CM.C1x[at], new(bn256.GT).Add(new(bn256.GT).Add(new(bn256.GT).ScalarMult(pp.GT, cipherNIZK.Lambda[at]), new(bn256.GT).ScalarMult(pk.AlphaGT, cipherNIZK.R[at])), new(bn256.GT).ScalarMult(cipher.CM.C1x[at], challenge))) {
 					return false
 				}
-				if !G1Equal(cipherNIZK.CM.C2x[at], new(bn256.G1).Add(new(bn256.G1).Neg(new(bn256.G1).ScalarBaseMult(cipherNIZK.R[at])), new(bn256.G1).ScalarMult(cipher.CM.C2x[at], challenge))) {
+				if !Operation.G1Equal(cipherNIZK.CM.C2x[at], new(bn256.G1).Add(new(bn256.G1).Neg(new(bn256.G1).ScalarBaseMult(cipherNIZK.R[at])), new(bn256.G1).ScalarMult(cipher.CM.C2x[at], challenge))) {
 					return false
 				}
-				if !G1Equal(cipherNIZK.CM.C3x[at], new(bn256.G1).Add(new(bn256.G1).ScalarMult(pk.BetaG1, cipherNIZK.R[at]), new(bn256.G1).Add(new(bn256.G1).ScalarBaseMult(cipherNIZK.Omega[at]), new(bn256.G1).ScalarMult(cipher.CM.C3x[at], challenge)))) {
+				if !Operation.G1Equal(cipherNIZK.CM.C3x[at], new(bn256.G1).Add(new(bn256.G1).ScalarMult(pk.BetaG1, cipherNIZK.R[at]), new(bn256.G1).Add(new(bn256.G1).ScalarBaseMult(cipherNIZK.Omega[at]), new(bn256.G1).ScalarMult(cipher.CM.C3x[at], challenge)))) {
 					return false
 				}
 				F_delta := HashG1(pp, at)
-				if !G1Equal(cipherNIZK.CM.C4x[at], new(bn256.G1).Add(new(bn256.G1).ScalarMult(F_delta, cipherNIZK.R[at]), new(bn256.G1).ScalarMult(cipher.CM.C4x[at], challenge))) {
+				if !Operation.G1Equal(cipherNIZK.CM.C4x[at], new(bn256.G1).Add(new(bn256.G1).ScalarMult(F_delta, cipherNIZK.R[at]), new(bn256.G1).ScalarMult(cipher.CM.C4x[at], challenge))) {
 					return false
 				}
 			}
@@ -596,10 +554,10 @@ func CheckCipher(pp *PP, cipher *Cipher, cipherNIZK *NIZKCipher, pkSet []*AuthPK
 	}
 	lambdaRecon, _ := LSSSRecon(cipher.Msp, cipherNIZK.Lambda)
 	omegaRecon, _ := LSSSRecon(cipher.Msp, cipherNIZK.Omega)
-	if !BigIntEqual(lambdaRecon, cipherNIZK.S) {
+	if !Operation.BigIntEqual(lambdaRecon, cipherNIZK.S) {
 		return false
 	}
-	if !BigIntEqual(omegaRecon, big.NewInt(int64(0))) {
+	if !Operation.BigIntEqual(omegaRecon, big.NewInt(int64(0))) {
 		return false
 	}
 	return true

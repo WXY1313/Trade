@@ -7,7 +7,7 @@ import (
 	"math/big"
 	"strings"
 
-	"github.com/WXY1313/Trade/SymEnc"
+	"github.com/WXY1313/Trade/Crypto/SymEnc"
 	"github.com/fentec-project/bn256"
 	"github.com/fentec-project/gofe/abe"
 	"github.com/fentec-project/gofe/data"

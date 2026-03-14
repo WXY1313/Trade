@@ -18,7 +18,7 @@ type Node struct {
 
 func NewNode(IsLeaf bool, num int, T int, idx *big.Int) *Node {
 	return &Node{
-		IsLeaf:      IsLeaf, 
+		IsLeaf:      IsLeaf,
 		Children:    []*Node{},
 		Childrennum: num,
 		T:           T,
@@ -52,7 +52,7 @@ func GrpLSSSShare(S *bn256.G1, AA *Node) ([]*bn256.G1, error) {
 }
 
 // AA *GSS.Node
-func GrpLSSSRecon(invRecMatrix [][]*big.Int, shares []*bn256.G1, I []int) (*bn256.G1, error) {
+func GrpLSSSReconG1(invRecMatrix [][]*big.Int, shares []*bn256.G1, I []int) (*bn256.G1, error) {
 	// matrix := lsss.Convert(AA)
 	rows := len(I)
 	// recMatrix := make([][]*big.Int, rows)
@@ -70,6 +70,29 @@ func GrpLSSSRecon(invRecMatrix [][]*big.Int, shares []*bn256.G1, I []int) (*bn25
 	reconS := new(bn256.G1).ScalarBaseMult(big.NewInt(0))
 	for i := 0; i < len(w[0]); i++ {
 		reconS.Add(reconS, new(bn256.G1).ScalarMult(shares[i], w[0][i]))
+	}
+	return reconS, nil
+}
+
+// AA *GSS.Node
+func GrpLSSSReconGT(invRecMatrix [][]*big.Int, shares []*bn256.GT, I []int) (*bn256.GT, error) {
+	// matrix := lsss.Convert(AA)
+	rows := len(I)
+	// recMatrix := make([][]*big.Int, rows)
+	// for i := 0; i < len(I); i++ {
+	// 	recMatrix[i] = matrix[I[i]][:rows]
+	// }
+	// invRecMatrix, _ := lsss.GaussJordanInverse(recMatrix)
+	one := make([][]*big.Int, 1)
+	one[0] = make([]*big.Int, rows)
+	for i := 0; i < rows; i++ {
+		one[0][i] = big.NewInt(0)
+	}
+	one[0][0] = big.NewInt(1)
+	w, _ := MultiplyMatrix(one, invRecMatrix)
+	reconS := new(bn256.GT).ScalarBaseMult(big.NewInt(0))
+	for i := 0; i < len(w[0]); i++ {
+		reconS.Add(reconS, new(bn256.GT).ScalarMult(shares[i], w[0][i]))
 	}
 	return reconS, nil
 }
@@ -101,7 +124,7 @@ func LSSSShare(s *big.Int, matrix [][]*big.Int) ([]*big.Int, error) {
 }
 
 func LSSSRecon(invRecMatrix [][]*big.Int, shares []*big.Int, I []int) (*big.Int, error) {
-	
+
 	rows := len(I)
 	one := make([][]*big.Int, 1)
 	one[0] = make([]*big.Int, rows)

@@ -1,12 +1,12 @@
 package CPABE
 
 import (
-	"bytes"
 	"crypto/rand"
 	"fmt"
 	"math/big"
 	"strconv"
 
+	"github.com/WXY1313/Trade/Crypto/Operation"
 	"github.com/fentec-project/bn256"
 	"github.com/fentec-project/gofe/abe"
 	"github.com/fentec-project/gofe/data"
@@ -51,18 +51,39 @@ type ABECiphertext struct {
 	C3      map[string]*bn256.G1 //Ci''=g^{λi}
 }
 
-func G1Equal(a, b *bn256.G1) bool {
-	if a == nil || b == nil {
-		return false
-	}
-	return bytes.Equal(a.Marshal(), b.Marshal())
-}
+func LSSSRecon(msp *abe.MSP, idToShare map[string]*bn256.G1) (*bn256.G1, error) {
+	goodMatRows := make([]data.Vector, 0)
+	goodHolders := make([]string, 0)
 
-func GTEqual(a, b *bn256.GT) bool {
-	if a == nil || b == nil {
-		return a == nil && b == nil
+	for i, id := range msp.RowToAttrib {
+		if idToShare[id] != nil {
+			goodMatRows = append(goodMatRows, msp.Mat[i])
+			goodHolders = append(goodHolders, id)
+		}
 	}
-	return a.String() == b.String()
+	goodMat, err := data.NewMatrix(goodMatRows)
+	if err != nil {
+		return nil, err
+	}
+
+	//choose consts c_x, such that \sum c_x A_x = (1,0,...,0)
+	// if they don't exist, holders are not ok
+	goodCols := goodMat.Cols()
+	if goodCols == 0 {
+		return nil, fmt.Errorf("no good matrix columns")
+	}
+	one := data.NewConstantVector(goodCols, big.NewInt(0))
+	one[0] = big.NewInt(1)
+	c, err := data.GaussianEliminationSolver(goodMat.Transpose(), one, bn256.Order)
+	if err != nil {
+		return nil, err
+	}
+	s := new(bn256.G1).ScalarBaseMult(big.NewInt(0))
+	for i, id := range goodHolders {
+		c[i] = c[i].Mod(c[i], bn256.Order)
+		s.Add(s, new(bn256.G1).ScalarMult(idToShare[id], c[i]))
+	}
+	return s, nil
 }
 
 func NewCPABE() *CPABE {
@@ -172,10 +193,8 @@ func GeneratePolicy(attrCount int) string {
 }
 
 func Encrypt(MPK *MPK, m *big.Int, policy string) (*ABECiphertext, error) {
-	fmt.Printf("Policy=%v\n", policy)
 	sampler := sample.NewUniformRange(big.NewInt(1), MPK.Order)
 	msp, _ := abe.BooleanToMSP(policy, false)
-	fmt.Printf("MSP=%v\n", msp)
 	mspRows := msp.Mat.Rows()
 	mspCols := msp.Mat.Cols()
 	// sanity checks
@@ -202,7 +221,6 @@ func Encrypt(MPK *MPK, m *big.Int, policy string) (*ABECiphertext, error) {
 	betaInv := new(big.Int).ModInverse(beta, MPK.Order)
 	com := new(bn256.G1).ScalarBaseMult(m)
 	M := bn256.Pair(new(bn256.G1).ScalarMult(MPK.H1, m), MPK.U2)
-	fmt.Printf("Message=%v\n", M)
 	c := new(bn256.G1).Add(new(bn256.G1).ScalarMult(MPK.H1, m), new(bn256.G1).ScalarMult(MPK.AlphaG1, beta))
 	_c := new(bn256.G2).ScalarMult(MPK.G2, beta)
 
@@ -237,7 +255,7 @@ func Encrypt(MPK *MPK, m *big.Int, policy string) (*ABECiphertext, error) {
 		result.Mod(result, MPK.Order)
 		C3Set[at] = new(bn256.G1).ScalarMult(MPK.H1, result)
 	}
-	//fmt.Printf("C1Set=%v\n", C1Set)
+
 	return &ABECiphertext{
 		Message: M,
 		Com:     com,   // Com = gG1^m
@@ -249,6 +267,23 @@ func Encrypt(MPK *MPK, m *big.Int, policy string) (*ABECiphertext, error) {
 		C3:      C3Set, //Ci''=h^{λi}
 	}, nil
 
+}
+
+func CipherCheck(mpk *MPK, ct *ABECiphertext) bool {
+	if !Operation.GTEqual(bn256.Pair(ct.C, mpk.G2), new(bn256.GT).Add(bn256.Pair(ct.Com, mpk.H2), bn256.Pair(mpk.AlphaG1, ct._C))) {
+		return false
+	}
+	for _, at := range ct.MSP.RowToAttrib {
+		if !Operation.GTEqual(bn256.Pair(ct.C1[at], mpk.G2), new(bn256.GT).Add(bn256.Pair(ct.C3[at], ct._C), bn256.Pair(new(bn256.G1).Neg(ct.C2[at]), mpk.HXsG2[at]))) {
+			return false
+		}
+	}
+	recoverResult, _ := LSSSRecon(ct.MSP, ct.C3)
+	fmt.Printf("recoverResult=%v\n", recoverResult)
+	if !Operation.G1Equal(mpk.H1, recoverResult) {
+		return false
+	}
+	return true
 }
 
 func Decrypt(MPK *MPK, CT *ABECiphertext, SK *SK) (*bn256.GT, error) {
@@ -297,18 +332,8 @@ func Decrypt(MPK *MPK, CT *ABECiphertext, SK *SK) (*bn256.GT, error) {
 			return nil, fmt.Errorf("attribute %s not in ciphertext dicts", at)
 		}
 	}
-	// --- 修正这里的打印 ---
-	fmt.Println("=== Decryption Intermediate Values (eggLambda) ===")
-	for k, v := range eggLambda {
-		if v != nil {
-			fmt.Printf("Key: %s, Value: %v\n", k, v)
-		} else {
-			fmt.Printf("Key: %s, Value: <nil>\n", k)
-		}
-	}
-	fmt.Println("==============================================")
-	eggs := new(bn256.GT).ScalarBaseMult(big.NewInt(0))
 
+	eggs := new(bn256.GT).ScalarBaseMult(big.NewInt(0))
 	for _, at := range goodAttribs {
 		if eggLambda[at] != nil {
 			sign := cx[at].Cmp(big.NewInt(0))
