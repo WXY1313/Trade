@@ -8,6 +8,7 @@ import (
 
 	"github.com/fentec-project/gofe/sample"
 	"github.com/stretchr/testify/require"
+	"github.com/WXY1313/Trade/Crypto/Operation"
 )
 
 func TestAll(t *testing.T) {
@@ -42,7 +43,7 @@ func TestAll(t *testing.T) {
 
 	//Decrypt
 	recoverMessage, err := Decrypt(MPK, ABECT, SK)
-	if !GTEqual(ABECT.Message, recoverMessage) {
+	if !Operation.GTEqual(ABECT.Message, recoverMessage) {
 		t.Fatalf("decryption failed: Kθ mismatch\noriginal: %v\nrecovered: %v",
 			ABECT.Message, recoverMessage)
 	}

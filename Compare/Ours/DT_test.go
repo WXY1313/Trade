@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/WXY1313/Trade/Crypto/CPABE"
+	"github.com/WXY1313/Trade/Crypto/Operation"
 	"github.com/WXY1313/Trade/Crypto/SymEnc"
 	"github.com/fentec-project/bn256"
 	// "github.com/stretchr/testify/assert"
@@ -52,6 +53,8 @@ func TestDT(t *testing.T) {
 	ct := SymEnc.XOREncryptDecrypt([]byte(Message), SymEnc.KDF(SymKey))
 	//Construct the buying policy
 	policy := CPABE.GeneratePolicy(5)
+
+
 	//Generate and Check Ciphertext
 	CT, matrix := Encrypt(MPK, SPK, policy, s, pko)
 	cipherVer := EncVer(MPK, SPK, CT, matrix, pko)
@@ -65,7 +68,7 @@ func TestDT(t *testing.T) {
 	fmt.Printf("The rekey is %v\n", RKValid)
 	//Decrypt CT using pay-per buyer's RK and attribute key AK
 	recoverSymKey := PerDecrypt(MPK, CT, matrix, RK, sku, AK)
-	if !CPABE.GTEqual(SymKey, recoverSymKey) {
+	if !Operation.GTEqual(SymKey, recoverSymKey) {
 		t.Fatalf("decryption failed: SymKey mismatch\noriginal: %v\nrecovered: %v",
 			SymKey, recoverSymKey)
 	} else {
@@ -81,7 +84,7 @@ func TestDT(t *testing.T) {
 	fmt.Printf("The subscription key is %v\n", SKValid)
 	//Decrypt CT using subscription buyer's RK and attribute key AK
 	recoverSymKey = SubDecrypt(MPK, SPK, CT, matrix, SK, sku, AK)
-	if !CPABE.GTEqual(SymKey, recoverSymKey) {
+	if !Operation.GTEqual(SymKey, recoverSymKey) {
 		t.Fatalf("decryption failed: SymKey mismatch\noriginal: %v\nrecovered: %v",
 			SymKey, recoverSymKey)
 	} else {

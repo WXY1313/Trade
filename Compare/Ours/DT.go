@@ -5,10 +5,12 @@ import (
 	//"pvgss/crypto/dleq"
 
 	"crypto/rand"
+	"fmt"
 	"math/big"
 
 	"github.com/WXY1313/Trade/Crypto/CPABE"
 	"github.com/WXY1313/Trade/Crypto/LSSS"
+	"github.com/WXY1313/Trade/Crypto/Operation"
 	Sub "github.com/WXY1313/Trade/Crypto/Subscribe"
 	"github.com/fentec-project/bn256"
 	// "github.com/stretchr/testify/assert"
@@ -61,8 +63,12 @@ func Encrypt(MPK *CPABE.MPK, SPK *Sub.SPK, policy string, s *big.Int, pko *bn256
 	P_pay.Children = []*LSSS.Node{P_per, P_sub}
 	matrix := LSSS.Convert(root)
 
+	// sum := new(bn256.G1).Add(new(bn256.G1).ScalarBaseMult(big.NewInt(1)), new(bn256.G1).ScalarBaseMult(verResult[0][0]))
+	// fmt.Printf("VerResult=%v\n", sum)
+
 	com := new(bn256.G1).ScalarMult(MPK.G1, s)
 	shares, _ := LSSS.LSSSShare(s, matrix)
+	fmt.Printf("Shares=%v\n", shares)
 	//Generate P_buyer ciphertext C1
 	ABECT, _ := CPABE.Encrypt(MPK, shares[0], policy)
 	//Generate P_per ciphertext C2
@@ -100,7 +106,7 @@ func EncVer(MPK *CPABE.MPK, SPK *Sub.SPK, CT *DTCiphertext, matrix [][]*big.Int,
 	}
 	invRecMatrix, _ := LSSS.GaussJordanInverse(recMatrix)
 	isShareValid, _ := LSSS.GrpLSSSReconG1(invRecMatrix, shareCom, I1)
-	if !CPABE.G1Equal(isShareValid, CT.Com) {
+	if !Operation.G1Equal(isShareValid, CT.Com) {
 		return false
 	}
 	I2 := make([]int, 2)
@@ -113,7 +119,7 @@ func EncVer(MPK *CPABE.MPK, SPK *Sub.SPK, CT *DTCiphertext, matrix [][]*big.Int,
 	}
 	invRecMatrix, _ = LSSS.GaussJordanInverse(recMatrix)
 	isShareValid, _ = LSSS.GrpLSSSReconG1(invRecMatrix, shareCom, I2)
-	if !CPABE.G1Equal(isShareValid, CT.Com) {
+	if !Operation.G1Equal(isShareValid, CT.Com) {
 		return false
 	}
 	return true
@@ -131,10 +137,10 @@ func ReKeyGen(MPK *CPABE.MPK, CT *DTCiphertext, sko *big.Int, pko, pku *bn256.G1
 }
 
 func ReKeyVer(MPK *CPABE.MPK, CT *DTCiphertext, rekey *ReKey, vko, vku *bn256.G2) bool {
-	if !CPABE.GTEqual(bn256.Pair(rekey.D2, MPK.G2), bn256.Pair(rekey.D1, vko)) {
+	if !Operation.GTEqual(bn256.Pair(rekey.D2, MPK.G2), bn256.Pair(rekey.D1, vko)) {
 		return false
 	}
-	if !CPABE.GTEqual(bn256.Pair(rekey.D3, vko), new(bn256.GT).Add(bn256.Pair(CT.C2, MPK.H2), bn256.Pair(rekey.D2, vku))) {
+	if !Operation.GTEqual(bn256.Pair(rekey.D3, vko), new(bn256.GT).Add(bn256.Pair(CT.C2, MPK.H2), bn256.Pair(rekey.D2, vku))) {
 		return false
 	}
 	return true
