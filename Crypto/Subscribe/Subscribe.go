@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"math/big"
 
-	"github.com/WXY1313/Trade/Crypto/CPABE"
+	CPABE "github.com/WXY1313/Trade/Crypto/CPABE/Threshold"
 	"github.com/fentec-project/bn256"
 	"github.com/fentec-project/gofe/sample"
 )

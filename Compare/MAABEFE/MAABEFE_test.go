@@ -3,11 +3,12 @@ package MAABEFE
 import (
 	"crypto/rand"
 	"fmt"
+	"math/big"
 	"testing"
 
+	"github.com/WXY1313/Trade/Crypto/CPABE/Threshold/node"
 	"github.com/WXY1313/Trade/Crypto/SymEnc"
 	"github.com/fentec-project/bn256"
-	"github.com/fentec-project/gofe/abe"
 	"github.com/fentec-project/gofe/sample"
 	"github.com/stretchr/testify/assert"
 )
@@ -19,9 +20,10 @@ func TestMAABEFE(t *testing.T) {
 	pp := GlobalSetup()
 
 	// create three authorities, each with two attributes
-	attrSet1 := []string{"auth1:at1", "auth1:at2"}
-	attrSet2 := []string{"auth2:at1", "auth2:at2"}
-	attrSet3 := []string{"auth3:at1", "auth3:at2"}
+	attrSet1 := []string{"auth1:Attr1", "auth1:Attr2"}
+	attrSet2 := []string{"auth2:Attr3", "auth2:Attr4"}
+	attrSet3 := []string{"auth3:Attr5", "auth3:Attr6"}
+
 	auth1, err := AuthSetup(pp, "auth1")
 	if err != nil {
 		t.Fatalf("Failed generation authority %s: %v\n", "auth1", err)
@@ -36,10 +38,31 @@ func TestMAABEFE(t *testing.T) {
 	}
 
 	// create a msp struct out of the boolean formula
-	msp, err := abe.BooleanToMSP("((auth1:at1 AND auth2:at1) OR (auth1:at2 AND auth2:at2)) OR (auth3:at1 AND auth3:at2)", false)
-	if err != nil {
-		t.Fatalf("Failed to generate the policy: %v\n", err)
-	}
+	//Access Policy
+	root := node.NewNode(false, 3, 3, big.NewInt(int64(0)), "")
+	P_1 := node.NewNode(false, 3, 2, big.NewInt(int64(1)), "")
+	P_D := node.NewNode(true, 0, 1, big.NewInt(int64(2)), "auth1:Attr1")
+	P_2 := node.NewNode(false, 2, 1, big.NewInt(int64(3)), "")
+	root.Children = []*node.Node{P_1, P_D, P_2}
+	P_A := node.NewNode(true, 0, 1, big.NewInt(int64(1)), "auth1:Attr2")
+	P_B := node.NewNode(true, 0, 1, big.NewInt(int64(2)), "auth2:Attr3")
+	P_C := node.NewNode(true, 0, 1, big.NewInt(int64(3)), "auth2:Attr4")
+	P_1.Children = []*node.Node{P_A, P_B, P_C}
+	P_E := node.NewNode(true, 0, 1, big.NewInt(int64(1)), "auth3:Attr5")
+	P_F := node.NewNode(true, 0, 1, big.NewInt(int64(2)), "auth3:Attr6")
+	P_2.Children = []*node.Node{P_E, P_F}
+
+	//Authorized path
+	path := node.NewNode(false, 3, 3, big.NewInt(int64(0)), "")
+	P_1 = node.NewNode(false, 2, 2, big.NewInt(int64(1)), "")
+	P_D = node.NewNode(true, 0, 1, big.NewInt(int64(2)), "auth1:Attr1")
+	P_2 = node.NewNode(false, 1, 1, big.NewInt(int64(3)), "")
+	path.Children = []*node.Node{P_1, P_D, P_2}
+	P_A = node.NewNode(true, 0, 1, big.NewInt(int64(1)), "auth1:Attr2")
+	P_B = node.NewNode(true, 0, 1, big.NewInt(int64(2)), "auth2:Attr3")
+	P_1.Children = []*node.Node{P_A, P_B}
+	P_E = node.NewNode(true, 0, 1, big.NewInt(int64(1)), "auth3:Attr5")
+	P_2.Children = []*node.Node{P_E}
 
 	// define the set of all public keys we use
 	pkSet := []*AuthPK{auth1.PK, auth2.PK, auth3.PK}
@@ -50,7 +73,7 @@ func TestMAABEFE(t *testing.T) {
 	// encrypt the message with the decryption policy in msp
 	sampler := sample.NewUniform(pp.P)
 	m, _ := sampler.Sample()
-	ct, nizk, err := Encrypt(pp, m, msg, msp, pkSet)
+	ct, nizk, err := Encrypt(pp, m, msg, root, pkSet)
 	if err != nil {
 		t.Fatalf("Failed to encrypt: %v\n", err)
 	}
@@ -66,6 +89,11 @@ func TestMAABEFE(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to generate attribute keys: %v\n", err)
 	}
+	key12, err := KeyGen(pp, gid, auth1, attrSet1[1])
+	//keys1[1]
+	if err != nil {
+		t.Fatalf("Failed to generate attribute keys: %v\n", err)
+	}
 	// authority 2 issues keys to user
 	key21, err := KeyGen(pp, gid, auth2, attrSet2[0])
 	if err != nil {
@@ -77,13 +105,13 @@ func TestMAABEFE(t *testing.T) {
 		t.Fatalf("Failed to generate attribute keys: %v\n", err)
 	}
 
-	ks := []*AttrKey{key11, key21, key31} // ok
+	ks := []*AttrKey{key11, key12, key21, key31} // ok
 
 	// try to decrypt all messages
-	msg1, err := Decrypt(pp, ct, ks)
+	recoverMsg, err := Decrypt(pp, ct, ks, path)
 	if err != nil {
 		t.Fatalf("Error decrypting with keyset 1: %v\n", err)
 	}
-	assert.Equal(t, msg, msg1)
+	assert.Equal(t, msg, recoverMsg)
 
 }

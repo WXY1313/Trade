@@ -7,9 +7,11 @@ import (
 	"math/big"
 	"strings"
 
+	"github.com/WXY1313/Trade/Crypto/CPABE/Threshold/lsss"
+	"github.com/WXY1313/Trade/Crypto/CPABE/Threshold/node"
+	"github.com/WXY1313/Trade/Crypto/CPABE/Threshold/opmatrix"
 	"github.com/WXY1313/Trade/Crypto/SymEnc"
 	"github.com/fentec-project/bn256"
-	"github.com/fentec-project/gofe/abe"
 	"github.com/fentec-project/gofe/data"
 	"github.com/fentec-project/gofe/sample"
 	"golang.org/x/crypto/sha3"
@@ -200,68 +202,50 @@ func ReKeyGen(gid string, akSet []*AttrKey) (*bn256.GT, *ReKey, error) {
 }
 
 type EDK struct {
-	C0  *bn256.GT
-	C1x map[string]*bn256.GT
-	C2x map[string]*bn256.G1
-	C3x map[string]*bn256.G1
-	C4x map[string]*bn256.G1
-	Msp *abe.MSP
+	C0     *bn256.GT
+	C1x    map[string]*bn256.GT
+	C2x    map[string]*bn256.G1
+	C3x    map[string]*bn256.G1
+	C4x    map[string]*bn256.G1
+	Policy *node.Node
 }
 
-func EDKGen(pp *PP, X *bn256.GT, msp *abe.MSP, pks []*AuthPK) (*EDK, error) {
+func EDKGen(pp *PP, X *bn256.GT, policy *node.Node, pks []*AuthPK) (*EDK, error) {
 	// sanity checks
-	if len(msp.Mat) == 0 || len(msp.Mat[0]) == 0 {
-		return nil, fmt.Errorf("empty msp matrix")
-	}
-	mspRows := msp.Mat.Rows()
-	mspCols := msp.Mat.Cols()
 	attribs := make(map[string]bool)
-	for _, i := range msp.RowToAttrib {
-		if attribs[i] {
-			return nil, fmt.Errorf("some attributes correspond to" +
-				"multiple rows of the MSP struct, the scheme is not secure")
+	// 定义一个内部递归函数来遍历树
+	for _, attr := range node.RowToAttrib(policy) {
+		if attribs[attr] {
+			return nil, fmt.Errorf("some attributes correspond to " +
+				"multiple rows of the Node struct, the scheme is not secure")
 		}
-		attribs[i] = true
+		attribs[attr] = true
 	}
 
 	// now encrypt symKey with MA-ABE
 	// rand generator
 	sampler := sample.NewUniform(bn256.Order)
 	// pick random vector v with random s as first element
-	v, err := data.NewRandomVector(mspCols, sampler)
-	if err != nil {
-		return nil, err
-	}
-	s := v[0]
-	if err != nil {
-		return nil, err
-	}
-	lambdaI, err := msp.Mat.MulVec(v)
-	if err != nil {
-		return nil, err
-	}
-	if len(lambdaI) != mspRows {
-		return nil, fmt.Errorf("wrong lambda len")
-	}
-	lambda := make(map[string]*big.Int)
-	for i, at := range msp.RowToAttrib {
-		lambda[at] = lambdaI[i]
-	}
+	s, _ := sampler.Sample()
+	lambda, err := lsss.Share(s, policy)
+
 	// pick random vector w with 0 as first element
-	w, err := data.NewRandomVector(mspCols, sampler)
+	matrix, _ := node.Convert(policy)
+	w, err := data.NewRandomVector(len(matrix[0]), sampler)
 	if err != nil {
 		return nil, err
 	}
 	w[0] = big.NewInt(0)
-	omegaI, err := msp.Mat.MulVec(w)
+
+	omegaI, err := opmatrix.MatrixMulVector(matrix, w)
 	if err != nil {
 		return nil, err
 	}
-	if len(omegaI) != mspRows {
+	if len(omegaI) != len(matrix) {
 		return nil, fmt.Errorf("wrong omega len")
 	}
 	omega := make(map[string]*big.Int)
-	for i, at := range msp.RowToAttrib {
+	for i, at := range node.RowToAttrib(policy) {
 		omega[at] = omegaI[i]
 	}
 
@@ -272,15 +256,15 @@ func EDKGen(pp *PP, X *bn256.GT, msp *abe.MSP, pks []*AuthPK) (*EDK, error) {
 	c3 := make(map[string]*bn256.G1)
 	c4 := make(map[string]*bn256.G1)
 	// get randomness
-	rI, err := data.NewRandomVector(mspRows, sampler)
+	rI, err := data.NewRandomVector(len(matrix), sampler)
 	r := make(map[string]*big.Int)
-	for i, at := range msp.RowToAttrib {
+	for i, at := range node.RowToAttrib(policy) {
 		r[at] = rI[i]
 	}
 	if err != nil {
 		return nil, err
 	}
-	for _, at := range msp.RowToAttrib {
+	for _, at := range node.RowToAttrib(policy) {
 		// find the correct pubkey
 		foundPK := false
 		for _, pk := range pks {
@@ -315,12 +299,12 @@ func EDKGen(pp *PP, X *bn256.GT, msp *abe.MSP, pks []*AuthPK) (*EDK, error) {
 	}
 
 	return &EDK{
-		C0:  c0,
-		C1x: c1,
-		C2x: c2,
-		C3x: c3,
-		C4x: c4,
-		Msp: msp,
+		C0:     c0,
+		C1x:    c1,
+		C2x:    c2,
+		C3x:    c3,
+		C4x:    c4,
+		Policy: policy,
 	}, nil
 
 }
@@ -333,7 +317,7 @@ type Cipher struct {
 	C3x        map[string]*bn256.G1
 	C4x        map[string]*bn256.G1
 	C5x        map[string]*bn256.G2
-	Msp        *abe.MSP
+	Policy     *node.Node
 	Ciphertext []byte // symmetric encryption of the string message
 }
 
@@ -350,20 +334,16 @@ func (a *Cipher) String() string {
 	return res
 }
 
-func Encrypt(pp *PP, msg string, msp *abe.MSP, pks []*AuthPK) (*Cipher, error) {
+func Encrypt(pp *PP, msg string, policy *node.Node, pks []*AuthPK) (*Cipher, error) {
 	// sanity checks
-	if len(msp.Mat) == 0 || len(msp.Mat[0]) == 0 {
-		return nil, fmt.Errorf("empty msp matrix")
-	}
-	mspRows := msp.Mat.Rows()
-	mspCols := msp.Mat.Cols()
 	attribs := make(map[string]bool)
-	for _, i := range msp.RowToAttrib {
-		if attribs[i] {
-			return nil, fmt.Errorf("some attributes correspond to" +
-				"multiple rows of the MSP struct, the scheme is not secure")
+	// 定义一个内部递归函数来遍历树
+	for _, attr := range node.RowToAttrib(policy) {
+		if attribs[attr] {
+			return nil, fmt.Errorf("some attributes correspond to " +
+				"multiple rows of the Node struct, the scheme is not secure")
 		}
-		attribs[i] = true
+		attribs[attr] = true
 	}
 	if len(msg) == 0 {
 		return nil, fmt.Errorf("message cannot be empty")
@@ -382,40 +362,26 @@ func Encrypt(pp *PP, msg string, msp *abe.MSP, pks []*AuthPK) (*Cipher, error) {
 	// rand generator
 	sampler := sample.NewUniform(bn256.Order)
 	// pick random vector v with random s as first element
-	v, err := data.NewRandomVector(mspCols, sampler)
-	if err != nil {
-		return nil, err
-	}
-	s := v[0]
-	if err != nil {
-		return nil, err
-	}
-	lambdaI, err := msp.Mat.MulVec(v)
-	if err != nil {
-		return nil, err
-	}
-	if len(lambdaI) != mspRows {
-		return nil, fmt.Errorf("wrong lambda len")
-	}
-	lambda := make(map[string]*big.Int)
-	for i, at := range msp.RowToAttrib {
-		lambda[at] = lambdaI[i]
-	}
+	s, _ := sampler.Sample()
+	lambda, err := lsss.Share(s, policy)
+
 	// pick random vector w with 0 as first element
-	w, err := data.NewRandomVector(mspCols, sampler)
+	matrix, _ := node.Convert(policy)
+	w, err := data.NewRandomVector(len(matrix[0]), sampler)
 	if err != nil {
 		return nil, err
 	}
 	w[0] = big.NewInt(0)
-	omegaI, err := msp.Mat.MulVec(w)
+
+	omegaI, err := opmatrix.MatrixMulVector(matrix, w)
 	if err != nil {
 		return nil, err
 	}
-	if len(omegaI) != mspRows {
+	if len(omegaI) != len(matrix) {
 		return nil, fmt.Errorf("wrong omega len")
 	}
 	omega := make(map[string]*big.Int)
-	for i, at := range msp.RowToAttrib {
+	for i, at := range node.RowToAttrib(policy) {
 		omega[at] = omegaI[i]
 	}
 
@@ -427,15 +393,15 @@ func Encrypt(pp *PP, msg string, msp *abe.MSP, pks []*AuthPK) (*Cipher, error) {
 	c4 := make(map[string]*bn256.G1)
 	c5 := make(map[string]*bn256.G2)
 	// get randomness
-	rI, err := data.NewRandomVector(mspRows, sampler)
+	rI, err := data.NewRandomVector(len(matrix), sampler)
 	r := make(map[string]*big.Int)
-	for i, at := range msp.RowToAttrib {
+	for i, at := range node.RowToAttrib(policy) {
 		r[at] = rI[i]
 	}
 	if err != nil {
 		return nil, err
 	}
-	for _, at := range msp.RowToAttrib {
+	for _, at := range node.RowToAttrib(policy) {
 		// find the correct pubkey
 		foundPK := false
 		for _, pk := range pks {
@@ -477,7 +443,7 @@ func Encrypt(pp *PP, msg string, msp *abe.MSP, pks []*AuthPK) (*Cipher, error) {
 		C3x:        c3,
 		C4x:        c4,
 		C5x:        c5,
-		Msp:        msp,
+		Policy:     policy,
 		Ciphertext: ciphertext,
 	}, nil
 }
@@ -501,9 +467,12 @@ func ReEncrypt(pp *PP, rk *ReKey, ct *Cipher) (*ReCipher, error) {
 	//	return "", err
 	//}
 	// find out which attributes are valid and extract them
-	goodMatRows := make([]data.Vector, 0)
-	goodAttribs := make([]string, 0)
-
+	matrix, rowMap := node.Convert(ct.Policy)
+	goodAttribs := make([]string, len(rowMap))
+	for i := 0; i < len(rowMap); i++ {
+		fmt.Printf("rowMap=%v\n", rowMap[i].Attribute)
+		goodAttribs[i] = rowMap[i].Attribute
+	}
 	aToK := make(map[string]*AttrKey)
 	for i := 0; i < len(rk.Attr); i++ {
 		attrName := rk.Attr[i]
@@ -513,32 +482,7 @@ func ReEncrypt(pp *PP, rk *ReKey, ct *Cipher) (*ReCipher, error) {
 		aToK[attrName].EK1 = rk.RK3[i]
 		aToK[attrName].EK2 = rk.RK4[i]
 	}
-	for i, at := range ct.Msp.RowToAttrib {
-		if aToK[at] != nil {
-			goodMatRows = append(goodMatRows, ct.Msp.Mat[i])
-			goodAttribs = append(goodAttribs, at)
-		}
-	}
-	goodMat, err := data.NewMatrix(goodMatRows)
-	if err != nil {
-		return nil, err
-	}
-	//choose consts c_x, such that \sum c_x A_x = (1,0,...,0)
-	// if they don't exist, keys are not ok
-	goodCols := goodMat.Cols()
-	if goodCols == 0 {
-		return nil, fmt.Errorf("no good matrix columns, most likely the keys contain no valid attribute")
-	}
-	one := data.NewConstantVector(goodCols, big.NewInt(0))
-	one[0] = big.NewInt(1)
-	c, err := data.GaussianEliminationSolver(goodMat.Transpose(), one, bn256.Order)
-	if err != nil {
-		return nil, err
-	}
-	cx := make(map[string]*big.Int)
-	for i, at := range goodAttribs {
-		cx[at] = c[i]
-	}
+
 	// compute intermediate values
 	eggLambda := make(map[string]*bn256.GT)
 	for _, at := range goodAttribs {
@@ -553,6 +497,69 @@ func ReEncrypt(pp *PP, rk *ReKey, ct *Cipher) (*ReCipher, error) {
 			return nil, fmt.Errorf("attribute %s not in ciphertext dicts", at)
 		}
 	}
+
+	// 2. 动态构建索引列表 I
+	// 原有的代码依赖全局变量 I，现在我们根据 shares 和 rowMap 动态生成它
+	var I []int
+	for i, node := range rowMap {
+		// 检查该行对应的节点是否是叶子节点（即属性）
+		// 并且检查用户是否拥有该属性（shares 中是否存在）
+		if node.IsLeaf {
+			if _, ok := eggLambda[node.Attribute]; ok {
+				I = append(I, i)
+			}
+		}
+	}
+
+	// 如果没有找到任何匹配的属性，无法恢复
+	if len(I) == 0 {
+		return nil, fmt.Errorf("no valid shares found to satisfy the policy")
+	}
+
+	rows := len(I)
+	// 3. 以下是你原有的逻辑，基本保持不变
+	// Prepare the sub-matrix for reconstruction
+	recMatrix := make([][]*big.Int, rows)
+	//reconRowMap := make([]string, rows)
+	for i := 0; i < rows; i++ {
+		idx := I[i]
+		// 边界检查
+		if idx >= len(matrix) {
+			return nil, fmt.Errorf("Index %d out of range (matrix has %d rows)", idx, len(matrix))
+		}
+		// 取前 'rows' 列构建方阵
+		if len(matrix[idx]) < rows {
+			return nil, fmt.Errorf("Matrix row %d has insufficient columns (%d < %d)", idx, len(matrix[idx]), rows)
+		}
+		recMatrix[i] = matrix[idx][:rows]
+		//reconRowMap[i] = rowMap[idx].Attribute
+	}
+
+	// Compute Inverse Matrix
+	// 调用你原有的函数
+	invRecMatrix, err := opmatrix.GaussJordanInverse(recMatrix)
+	if err != nil {
+		return nil, fmt.Errorf("Matrix inversion failed: %v", err)
+	}
+
+	// 构造单位向量 (1, 0, 0...)
+	one := make([][]*big.Int, 1)
+	one[0] = make([]*big.Int, rows)
+	for i := 0; i < rows; i++ {
+		one[0][i] = big.NewInt(0)
+	}
+	one[0][0] = big.NewInt(1)
+
+	// 计算系数向量 w
+	wMatrix, err := opmatrix.MultiplyMatrix(one, invRecMatrix)
+	if err != nil {
+		return nil, fmt.Errorf("Matrix multiplication (w) failed: %v", err)
+	}
+	cx := make(map[string]*big.Int)
+	for i, at := range goodAttribs {
+		cx[at] = wMatrix[0][i]
+	}
+
 	eggs := new(bn256.GT).ScalarBaseMult(big.NewInt(0))
 	for _, at := range goodAttribs {
 		if eggLambda[at] != nil {
@@ -573,7 +580,7 @@ func ReEncrypt(pp *PP, rk *ReKey, ct *Cipher) (*ReCipher, error) {
 	return &ReCipher{RC1: rc1, RC2: rc2, Ciphertext: ciphertext}, nil
 }
 
-func ReDecrypt(pp *PP, ak []*AttrKey, edk *EDK, recipher *ReCipher) (string, error) {
+func ReDecrypt(pp *PP, ak []*AttrKey, edk *EDK, recipher *ReCipher, path *node.Node) (string, error) {
 	// sanity checks
 	if len(ak) == 0 {
 		return "", fmt.Errorf("empty set of attribute keys")
@@ -590,39 +597,52 @@ func ReDecrypt(pp *PP, ak []*AttrKey, edk *EDK, recipher *ReCipher) (string, err
 	//	return "", err
 	//}
 	// find out which attributes are valid and extract them
-	goodMatRows := make([]data.Vector, 0)
-	goodAttribs := make([]string, 0)
+	// goodMatRows := make([]data.Vector, 0)
+	// goodAttribs := make([]string, 0)
+	// aToK := make(map[string]*AttrKey)
+	// for _, k := range ak {
+	// 	aToK[k.Attr] = k
+	// }
+	// for i, at := range node.RowToAttrib(edk.Policy) {
+	// 	if aToK[at] != nil {
+	// 		goodMatRows = append(goodMatRows, edk.Msp.Mat[i])
+	// 		goodAttribs = append(goodAttribs, at)
+	// 	}
+	// }
+	// goodMat, err := data.NewMatrix(goodMatRows)
+	// if err != nil {
+	// 	return "", err
+	// }
+	// //choose consts c_x, such that \sum c_x A_x = (1,0,...,0)
+	// // if they don't exist, keys are not ok
+	// goodCols := goodMat.Cols()
+	// if goodCols == 0 {
+	// 	return "", fmt.Errorf("no good matrix columns, most likely the keys contain no valid attribute")
+	// }
+	// one := data.NewConstantVector(goodCols, big.NewInt(0))
+	// one[0] = big.NewInt(1)
+	// c, err := data.GaussianEliminationSolver(goodMat.Transpose(), one, bn256.Order)
+	// if err != nil {
+	// 	return "", err
+	// }
+	// cx := make(map[string]*big.Int)
+	// for i, at := range goodAttribs {
+	// 	cx[at] = c[i]
+	// }
+	// compute intermediate values
+	// 1. 获取矩阵和行对应的节点映射
+	// 这里直接调用你刚才修改后的 Convert 函数
+	matrix, rowMap := node.Convert(path)
+	goodAttribs := make([]string, len(rowMap))
+	for i := 0; i < len(rowMap); i++ {
+		fmt.Printf("rowMap=%v\n", rowMap[i].Attribute)
+		goodAttribs[i] = rowMap[i].Attribute
+	}
 	aToK := make(map[string]*AttrKey)
 	for _, k := range ak {
 		aToK[k.Attr] = k
 	}
-	for i, at := range edk.Msp.RowToAttrib {
-		if aToK[at] != nil {
-			goodMatRows = append(goodMatRows, edk.Msp.Mat[i])
-			goodAttribs = append(goodAttribs, at)
-		}
-	}
-	goodMat, err := data.NewMatrix(goodMatRows)
-	if err != nil {
-		return "", err
-	}
-	//choose consts c_x, such that \sum c_x A_x = (1,0,...,0)
-	// if they don't exist, keys are not ok
-	goodCols := goodMat.Cols()
-	if goodCols == 0 {
-		return "", fmt.Errorf("no good matrix columns, most likely the keys contain no valid attribute")
-	}
-	one := data.NewConstantVector(goodCols, big.NewInt(0))
-	one[0] = big.NewInt(1)
-	c, err := data.GaussianEliminationSolver(goodMat.Transpose(), one, bn256.Order)
-	if err != nil {
-		return "", err
-	}
-	cx := make(map[string]*big.Int)
-	for i, at := range goodAttribs {
-		cx[at] = c[i]
-	}
-	// compute intermediate values
+
 	eggLambda := make(map[string]*bn256.GT)
 	for _, at := range goodAttribs {
 		if edk.C1x[at] != nil && edk.C2x[at] != nil && edk.C3x[at] != nil && edk.C4x[at] != nil {
@@ -635,6 +655,69 @@ func ReDecrypt(pp *PP, ak []*AttrKey, edk *EDK, recipher *ReCipher) (string, err
 			return "", fmt.Errorf("attribute %s not in ciphertext dicts", at)
 		}
 	}
+
+	// 2. 动态构建索引列表 I
+	// 原有的代码依赖全局变量 I，现在我们根据 shares 和 rowMap 动态生成它
+	var I []int
+	for i, node := range rowMap {
+		// 检查该行对应的节点是否是叶子节点（即属性）
+		// 并且检查用户是否拥有该属性（shares 中是否存在）
+		if node.IsLeaf {
+			if _, ok := eggLambda[node.Attribute]; ok {
+				I = append(I, i)
+			}
+		}
+	}
+
+	// 如果没有找到任何匹配的属性，无法恢复
+	if len(I) == 0 {
+		return "", fmt.Errorf("no valid shares found to satisfy the policy")
+	}
+
+	rows := len(I)
+	// 3. 以下是你原有的逻辑，基本保持不变
+	// Prepare the sub-matrix for reconstruction
+	recMatrix := make([][]*big.Int, rows)
+	//reconRowMap := make([]string, rows)
+	for i := 0; i < rows; i++ {
+		idx := I[i]
+		// 边界检查
+		if idx >= len(matrix) {
+			return "", fmt.Errorf("Index %d out of range (matrix has %d rows)", idx, len(matrix))
+		}
+		// 取前 'rows' 列构建方阵
+		if len(matrix[idx]) < rows {
+			return "", fmt.Errorf("Matrix row %d has insufficient columns (%d < %d)", idx, len(matrix[idx]), rows)
+		}
+		recMatrix[i] = matrix[idx][:rows]
+		//reconRowMap[i] = rowMap[idx].Attribute
+	}
+
+	// Compute Inverse Matrix
+	// 调用你原有的函数
+	invRecMatrix, err := opmatrix.GaussJordanInverse(recMatrix)
+	if err != nil {
+		return "", fmt.Errorf("Matrix inversion failed: %v", err)
+	}
+
+	// 构造单位向量 (1, 0, 0...)
+	one := make([][]*big.Int, 1)
+	one[0] = make([]*big.Int, rows)
+	for i := 0; i < rows; i++ {
+		one[0][i] = big.NewInt(0)
+	}
+	one[0][0] = big.NewInt(1)
+
+	// 计算系数向量 w
+	wMatrix, err := opmatrix.MultiplyMatrix(one, invRecMatrix)
+	if err != nil {
+		return "", fmt.Errorf("Matrix multiplication (w) failed: %v", err)
+	}
+	cx := make(map[string]*big.Int)
+	for i, at := range goodAttribs {
+		cx[at] = wMatrix[0][i]
+	}
+
 	eggs := new(bn256.GT).ScalarBaseMult(big.NewInt(0))
 	for _, at := range goodAttribs {
 		if eggLambda[at] != nil {

@@ -7,10 +7,10 @@ import (
 	"math/big"
 	"strconv"
 
-	"github.com/WXY1313/Trade/Crypto/LSSS"
+	"github.com/WXY1313/Trade/Crypto/CPABE/Threshold/lsss"
+	"github.com/WXY1313/Trade/Crypto/CPABE/Threshold/node"
 	"github.com/WXY1313/Trade/Crypto/SymEnc"
 	"github.com/fentec-project/bn256"
-	"github.com/fentec-project/gofe/abe"
 	"github.com/fentec-project/gofe/sample"
 )
 
@@ -47,12 +47,12 @@ type FSAC struct {
 }
 
 type FSACCiphertext struct {
-	CT  []byte
-	MSP *abe.MSP          // (M, ρ)
-	C   *bn256.GT         //C=h1^m*g1^{alpha*beta}
-	_C  *bn256.G2         //_C=h2^{beta}
-	C1  map[int]*bn256.G1 //Ci  = hG1^{λi}hiG1^{-ri}
-	C2  map[int]*bn256.G1 //Ci' = g1^{ri}
+	CT     []byte
+	Policy *node.Node           // (M, ρ)
+	C      *bn256.GT            //C=h1^m*g1^{alpha*beta}
+	_C     *bn256.G2            //_C=h2^{beta}
+	C1     map[string]*bn256.G1 //Ci  = hG1^{λi}hiG1^{-ri}
+	C2     map[string]*bn256.G1 //Ci' = g1^{ri}
 }
 
 func NewFSAC() *FSAC {
@@ -73,7 +73,7 @@ func G1Equal(a, b *bn256.G1) bool {
 	return bytes.Equal(a.Marshal(), b.Marshal())
 }
 
-func (fsac *FSAC) Setup() (*MPK, *bn256.G1, error) {
+func Setup() (*MPK, *bn256.G1, error) {
 	//Generate sytem attribute set
 	var attributeUniverse []string
 	for i := 1; i <= 100; i++ {
@@ -115,7 +115,7 @@ func (fsac *FSAC) Setup() (*MPK, *bn256.G1, error) {
 	return FSACMPK, FSACMSK, nil
 }
 
-func (fsac *FSAC) KeyGen(MPK *MPK, MSK *bn256.G1, su []string) (*SK, error) {
+func KeyGen(MPK *MPK, MSK *bn256.G1, su []string) (*SK, error) {
 	//t←Zp,L=g^t
 	sampler := sample.NewUniformRange(big.NewInt(1), MPK.Order)
 	t, _ := sampler.Sample()
@@ -135,7 +135,7 @@ func (fsac *FSAC) KeyGen(MPK *MPK, MSK *bn256.G1, su []string) (*SK, error) {
 	return &SK{K: k, L: l, KXs: kxs}, nil
 }
 
-func (fsac *FSAC) SanKeyGen(MPK *MPK) (*Key, error) {
+func SanKeyGen(MPK *MPK) (*Key, error) {
 	//t←Zp,L=g^t
 	sampler := sample.NewUniformRange(big.NewInt(1), MPK.Order)
 	sk, _ := sampler.Sample()
@@ -143,12 +143,10 @@ func (fsac *FSAC) SanKeyGen(MPK *MPK) (*Key, error) {
 	return &Key{SK: sk, PK: pk}, nil
 }
 
-func (fsac *FSAC) Encrypt(MPK *MPK, Mes string, policy string) (*FSACCiphertext, error) {
+func Encrypt(MPK *MPK, Mes string, policy *node.Node) (*FSACCiphertext, error) {
 	sampler := sample.NewUniformRange(big.NewInt(1), MPK.Order)
-	C1Set := make(map[int]*bn256.G1)
-	C2Set := make(map[int]*bn256.G1)
-	//Parse the access policy
-	msp, _ := abe.BooleanToMSP(policy, false)
+	C1Set := make(map[string]*bn256.G1)
+	C2Set := make(map[string]*bn256.G1)
 	//Generate the ABE ciphertext
 	k, _ := sampler.Sample()
 	K := new(bn256.GT).ScalarBaseMult(k)
@@ -159,34 +157,33 @@ func (fsac *FSAC) Encrypt(MPK *MPK, Mes string, policy string) (*FSACCiphertext,
 	c := new(bn256.GT).Add(K, new(bn256.GT).ScalarMult(MPK.AlphaGT, s))
 	_c := new(bn256.G2).ScalarMult(MPK.G2, s)
 	//LSSS.Share -> λi = Mi · v，v[0] = beta
-	lambdaMap, err := LSSS.Share(msp, s, MPK.Order)
+	lambdaI, err := lsss.Share(s, policy)
 	if err != nil {
 		return nil, err
 	}
 
-	for i, lambda := range lambdaMap {
+	for _, at := range node.RowToAttrib(policy) {
 		//ri<-Zp
 		ri, _ := sampler.Sample()
-		attri := msp.RowToAttrib[i]
-		HxG1i := MPK.HXsG1[attri]
+		HxG1i := MPK.HXsG1[at]
 		//ci = h^{a*lambdai}*hi^-ri
-		C1Set[i] = new(bn256.G1).Add(new(bn256.G1).ScalarMult(MPK.H1, lambda), new(bn256.G1).Neg(new(bn256.G1).ScalarMult(HxG1i, ri)))
+		C1Set[at] = new(bn256.G1).Add(new(bn256.G1).ScalarMult(MPK.H1, lambdaI[at]), new(bn256.G1).Neg(new(bn256.G1).ScalarMult(HxG1i, ri)))
 		//ci'=h^ri
-		C2Set[i] = new(bn256.G1).ScalarMult(MPK.G1, ri)
+		C2Set[at] = new(bn256.G1).ScalarMult(MPK.G1, ri)
 	}
 
 	return &FSACCiphertext{
-		CT:  ct,
-		MSP: msp,   // (M, ρ)
-		C:   c,     //C=e(hG1,uG2)^me(hG1,uG2)^{alpha*beta}
-		_C:  _c,    //_C=gG2^{beta}
-		C1:  C1Set, //Ci  = h^{a*λi}hiG1^{-ri}
-		C2:  C2Set, //Ci' = hG1^{ri}
+		CT:     ct,
+		Policy: policy, // (M, ρ)
+		C:      c,      //C=e(hG1,uG2)^me(hG1,uG2)^{alpha*beta}
+		_C:     _c,     //_C=gG2^{beta}
+		C1:     C1Set,  //Ci  = h^{a*λi}hiG1^{-ri}
+		C2:     C2Set,  //Ci' = hG1^{ri}
 	}, nil
 
 }
 
-func (fsac *FSAC) CipherCheck(MPK *MPK, CT *FSACCiphertext, su []string) (bool, error) {
+func CipherCheck(MPK *MPK, CT *FSACCiphertext, su []string, path *node.Node) (bool, error) {
 	sampler := sample.NewUniformRange(big.NewInt(1), MPK.Order)
 	y, _ := sampler.Sample()
 	u, _ := sampler.Sample()
@@ -199,18 +196,17 @@ func (fsac *FSAC) CipherCheck(MPK *MPK, CT *FSACCiphertext, su []string) (bool, 
 		kxs[su[i]] = new(bn256.G2).ScalarMult(MPK.HXsG2[su[i]], u)
 	}
 
-	p := MPK.Order
-	ASet := make(map[int]*bn256.GT)
+	ASet := make(map[string]*bn256.GT)
 	for i, _ := range kxs {
-		for j, v := range CT.MSP.RowToAttrib {
+		for _, v := range node.RowToAttrib(CT.Policy) {
 			if i == v {
-				left := bn256.Pair(CT.C1[j], l)
-				right := bn256.Pair(CT.C2[j], kxs[i])
-				ASet[j] = new(bn256.GT).Add(left, right)
+				left := bn256.Pair(CT.C1[v], l)
+				right := bn256.Pair(CT.C2[v], kxs[i])
+				ASet[v] = new(bn256.GT).Add(left, right)
 			}
 		}
 	}
-	A, err := LSSS.ReconGT(CT.MSP, ASet, p)
+	A, err := lsss.ReconGT(path, ASet)
 	if err != nil {
 		log.Fatalf("Fail to execute LSSSRecon ,Error: %v", err)
 	}
@@ -222,7 +218,7 @@ func (fsac *FSAC) CipherCheck(MPK *MPK, CT *FSACCiphertext, su []string) (bool, 
 	return true, err
 }
 
-func (fsac *FSAC) Santize(MPK *MPK, Key *Key, CT *FSACCiphertext) ([]byte, *VKey, error) {
+func Santize(MPK *MPK, Key *Key, CT *FSACCiphertext) ([]byte, *VKey, error) {
 	sampler := sample.NewUniformRange(big.NewInt(1), MPK.Order)
 	_k, _ := sampler.Sample()
 	_K := new(bn256.GT).ScalarBaseMult(_k)
@@ -233,20 +229,19 @@ func (fsac *FSAC) Santize(MPK *MPK, Key *Key, CT *FSACCiphertext) ([]byte, *VKey
 	return sanCT, &VKey{V0: v0, V1: v1}, nil
 }
 
-func (fsac *FSAC) Decrypt(MPK *MPK, CT *FSACCiphertext, SK *SK, VKey *VKey, Key *Key, ct []byte) (string, error) {
-	p := MPK.Order
-	ASet := make(map[int]*bn256.GT)
+func Decrypt(MPK *MPK, CT *FSACCiphertext, SK *SK, VKey *VKey, Key *Key, ct []byte, path *node.Node) (string, error) {
+	ASet := make(map[string]*bn256.GT)
 	for i, _ := range SK.KXs {
-		for j, v := range CT.MSP.RowToAttrib {
+		for _, v := range node.RowToAttrib(path) {
 			if i == v {
-				left := bn256.Pair(CT.C1[j], SK.L)
-				right := bn256.Pair(CT.C2[j], SK.KXs[i])
-				ASet[j] = new(bn256.GT).Add(left, right)
+				left := bn256.Pair(CT.C1[v], SK.L)
+				right := bn256.Pair(CT.C2[v], SK.KXs[i])
+				ASet[v] = new(bn256.GT).Add(left, right)
 			}
 		}
 	}
 	//R ← LSSS.Recon({ ˜Ri}i∈I , τ )
-	A, err := LSSS.ReconGT(CT.MSP, ASet, p)
+	A, err := lsss.ReconGT(path, ASet)
 	if err != nil {
 		log.Fatalf("Fail to execute LSSSRecon ,Error: %v", err)
 	}

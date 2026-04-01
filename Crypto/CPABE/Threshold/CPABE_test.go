@@ -1,4 +1,4 @@
-package FSAC
+package CPABE
 
 import (
 	"fmt"
@@ -7,6 +7,8 @@ import (
 	"testing"
 
 	"github.com/WXY1313/Trade/Crypto/CPABE/Threshold/node"
+	"github.com/WXY1313/Trade/Crypto/Operation"
+	"github.com/fentec-project/gofe/sample"
 	"github.com/stretchr/testify/require"
 )
 
@@ -21,11 +23,6 @@ func TestAll(t *testing.T) {
 	}
 	//KeyGen
 	SK, err := KeyGen(MPK, MSK, userAttrs)
-	require.NoError(t, err)
-	require.NotNil(t, SK)
-
-	//SanKeyGen
-	Key, err := SanKeyGen(MPK)
 	require.NoError(t, err)
 	require.NotNil(t, SK)
 
@@ -57,25 +54,23 @@ func TestAll(t *testing.T) {
 	P_E = node.NewNode(true, 0, 1, big.NewInt(int64(1)), "Attr5")
 	P_2.Children = []*node.Node{P_E}
 
-	Mes := "Secret"
-	CT, err := Encrypt(MPK, Mes, root)
+	sampler := sample.NewUniformRange(big.NewInt(1), MPK.Order)
+	m, _ := sampler.Sample()
+	ABECT, err := Encrypt(MPK, m, root)
 	if err != nil {
 		t.Errorf("fail to generate ABE ciphertext")
 		return
 	}
 
 	//CipherCheck
-	resultCipher, _ := CipherCheck(MPK, CT, userAttrs, path)
-	fmt.Printf("CipherCheck Result : %v\n", resultCipher)
-
-	//Santize
-	ctSan, VKey, err := Santize(MPK, Key, CT)
-	if err != nil {
-		t.Errorf("fail to generate santized ciphertext")
-		return
-	}
+	verResult := CipherCheck(root, path, MPK, ABECT)
+	fmt.Printf("The ciphertext verification is %v\n", verResult)
 
 	//Decrypt
-	recoverMes, err := Decrypt(MPK, CT, SK, VKey, Key, ctSan, path)
-	fmt.Printf("recoverMes=%v\n", recoverMes)
+
+	recoverMessage, err := Decrypt(path, MPK, ABECT, SK)
+	if !Operation.GTEqual(ABECT.Message, recoverMessage) {
+		t.Fatalf("decryption failed: Kθ mismatch\noriginal: %v\nrecovered: %v",
+			ABECT.Message, recoverMessage)
+	}
 }

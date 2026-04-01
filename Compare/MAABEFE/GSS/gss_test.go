@@ -1,35 +1,19 @@
-package FSAC
+package gss
 
 import (
+	"crypto/rand"
 	"fmt"
+
 	"math/big"
-	"strconv"
+
 	"testing"
 
 	"github.com/WXY1313/Trade/Crypto/CPABE/Threshold/node"
-	"github.com/stretchr/testify/require"
+	"github.com/fentec-project/bn256"
+	// "pvgss/crypto/gss"
 )
 
-func TestAll(t *testing.T) {
-	//Setup
-	MPK, MSK, err := Setup()
-
-	//KeyGen
-	var userAttrs []string
-	for i := 1; i <= 10; i++ {
-		userAttrs = append(userAttrs, "Attr"+strconv.Itoa(i)) // A1, A2, ..., A100
-	}
-	//KeyGen
-	SK, err := KeyGen(MPK, MSK, userAttrs)
-	require.NoError(t, err)
-	require.NotNil(t, SK)
-
-	//SanKeyGen
-	Key, err := SanKeyGen(MPK)
-	require.NoError(t, err)
-	require.NotNil(t, SK)
-
-	//Encrypt
+func TestGSS(t *testing.T) {
 	//Access Policy
 	root := node.NewNode(false, 3, 3, big.NewInt(int64(0)), "")
 	P_1 := node.NewNode(false, 3, 2, big.NewInt(int64(1)), "")
@@ -57,25 +41,30 @@ func TestAll(t *testing.T) {
 	P_E = node.NewNode(true, 0, 1, big.NewInt(int64(1)), "Attr5")
 	P_2.Children = []*node.Node{P_E}
 
-	Mes := "Secret"
-	CT, err := Encrypt(MPK, Mes, root)
+	secret, _ := rand.Int(rand.Reader, bn256.Order)
+
+	// test GrpGSSShare
+	shares, err := GssShare(secret, root)
 	if err != nil {
-		t.Errorf("fail to generate ABE ciphertext")
-		return
+		t.Errorf("GSSShare failed: %v", err)
+	}
+	fmt.Println("Shares generated successfully!")
+
+	if len(shares) != GetLen(root) {
+		t.Errorf("Shares length mismatch: expected %d, got %d", GetLen(root), len(shares))
 	}
 
-	//CipherCheck
-	resultCipher, _ := CipherCheck(MPK, CT, userAttrs, path)
-	fmt.Printf("CipherCheck Result : %v\n", resultCipher)
-
-	//Santize
-	ctSan, VKey, err := Santize(MPK, Key, CT)
-	if err != nil {
-		t.Errorf("fail to generate santized ciphertext")
-		return
+	attrSet := node.RowToAttrib(path)
+	Q := make(map[string]*big.Int)
+	for _, at := range attrSet {
+		Q[at] = shares[at]
 	}
 
-	//Decrypt
-	recoverMes, err := Decrypt(MPK, CT, SK, VKey, Key, ctSan, path)
-	fmt.Printf("recoverMes=%v\n", recoverMes)
+	recoveredSecret, _ := GssRecon(path, Q)
+	fmt.Println("orignal secret = ", secret)
+	fmt.Println("recover secret = ", recoveredSecret)
+	// Verify that the recovered secret is the same as the original secret
+	if recoveredSecret.Cmp(secret) != 0 {
+		t.Errorf("Secret reconstruction mismatch: expected %v, got %v", secret, recoveredSecret)
+	}
 }

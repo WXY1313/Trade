@@ -3,13 +3,14 @@ package DT
 import (
 	"crypto/rand"
 	"fmt"
+	"math/big"
 	"strconv"
 
 	//"pvgss/crypto/dleq"
 
 	"testing"
 
-	"github.com/WXY1313/Trade/Crypto/CPABE"
+	"github.com/WXY1313/Trade/Crypto/CPABE/Threshold/node"
 	"github.com/WXY1313/Trade/Crypto/Operation"
 	"github.com/WXY1313/Trade/Crypto/SymEnc"
 	"github.com/fentec-project/bn256"
@@ -52,12 +53,37 @@ func TestDT(t *testing.T) {
 	// Hide the trading message Message as the ciphertext ct using a symmetric key SymKey
 	ct := SymEnc.XOREncryptDecrypt([]byte(Message), SymEnc.KDF(SymKey))
 	//Construct the buying policy
-	policy := CPABE.GeneratePolicy(5)
+	//Access Policy
+	root := node.NewNode(false, 3, 3, big.NewInt(int64(0)), "")
+	P_1 := node.NewNode(false, 3, 2, big.NewInt(int64(1)), "")
+	P_D := node.NewNode(true, 0, 1, big.NewInt(int64(2)), "Attr1")
+	P_2 := node.NewNode(false, 3, 1, big.NewInt(int64(3)), "")
+	root.Children = []*node.Node{P_1, P_D, P_2}
+	P_A := node.NewNode(true, 0, 1, big.NewInt(int64(1)), "Attr2")
+	P_B := node.NewNode(true, 0, 1, big.NewInt(int64(2)), "Attr3")
+	P_C := node.NewNode(true, 0, 1, big.NewInt(int64(3)), "Attr4")
+	P_1.Children = []*node.Node{P_A, P_B, P_C}
+	P_E := node.NewNode(true, 0, 1, big.NewInt(int64(1)), "Attr5")
+	P_F := node.NewNode(true, 0, 1, big.NewInt(int64(2)), "Attr6")
+	P_G := node.NewNode(true, 0, 1, big.NewInt(int64(3)), "Attr7")
+	P_2.Children = []*node.Node{P_E, P_F, P_G}
+	matrix, _ := node.Convert(root)
 
+	//Authorized path
+	path := node.NewNode(false, 3, 3, big.NewInt(int64(0)), "")
+	P_1 = node.NewNode(false, 2, 2, big.NewInt(int64(1)), "")
+	P_D = node.NewNode(true, 0, 1, big.NewInt(int64(2)), "Attr1")
+	P_2 = node.NewNode(false, 1, 1, big.NewInt(int64(3)), "")
+	path.Children = []*node.Node{P_1, P_D, P_2}
+	P_A = node.NewNode(true, 0, 1, big.NewInt(int64(1)), "Attr2")
+	P_B = node.NewNode(true, 0, 1, big.NewInt(int64(2)), "Attr3")
+	P_1.Children = []*node.Node{P_A, P_B}
+	P_E = node.NewNode(true, 0, 1, big.NewInt(int64(1)), "Attr5")
+	P_2.Children = []*node.Node{P_E}
 
 	//Generate and Check Ciphertext
-	CT, matrix := Encrypt(MPK, SPK, policy, s, pko)
-	cipherVer := EncVer(MPK, SPK, CT, matrix, pko)
+	CT := Encrypt(MPK, SPK, root, s, pko)
+	cipherVer := EncVer(MPK, SPK, CT, vko, path)
 	fmt.Printf("Ciphertext is %v\n", cipherVer)
 
 	//Pay-per Phase
@@ -67,7 +93,7 @@ func TestDT(t *testing.T) {
 	RKValid := ReKeyVer(MPK, CT, RK, vko, vku)
 	fmt.Printf("The rekey is %v\n", RKValid)
 	//Decrypt CT using pay-per buyer's RK and attribute key AK
-	recoverSymKey := PerDecrypt(MPK, CT, matrix, RK, sku, AK)
+	recoverSymKey := PerDecrypt(path, MPK, CT, RK, sku, AK)
 	if !Operation.GTEqual(SymKey, recoverSymKey) {
 		t.Fatalf("decryption failed: SymKey mismatch\noriginal: %v\nrecovered: %v",
 			SymKey, recoverSymKey)
@@ -83,7 +109,7 @@ func TestDT(t *testing.T) {
 	SKValid := SubKeyVer(SPK, SK, vku)
 	fmt.Printf("The subscription key is %v\n", SKValid)
 	//Decrypt CT using subscription buyer's RK and attribute key AK
-	recoverSymKey = SubDecrypt(MPK, SPK, CT, matrix, SK, sku, AK)
+	recoverSymKey = SubDecrypt(path, MPK, SPK, CT, matrix, SK, sku, AK)
 	if !Operation.GTEqual(SymKey, recoverSymKey) {
 		t.Fatalf("decryption failed: SymKey mismatch\noriginal: %v\nrecovered: %v",
 			SymKey, recoverSymKey)

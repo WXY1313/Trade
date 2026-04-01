@@ -1,60 +1,102 @@
-// Reed Solomon check
-package RSCode
+package RScode
 
 import (
+	"bytes"
 	"crypto/rand"
+	"errors"
 	"fmt"
 	"math/big"
 
+	"github.com/WXY1313/Trade/Crypto/CPABE/Threshold/node"
 	"github.com/fentec-project/bn256"
 )
 
-type Node struct {
-	IsLeaf      bool
-	Children    []*Node
-	Childrennum int
-	T           int
-	Idx         *big.Int
+func RecurRSCode(AA *node.Node, shares []*bn256.G1) (bool, error) {
+	if AA == nil {
+		return false, errors.New("AA is empty")
+	}
+	_, _, err := verifyRecursiveRS(AA, shares, 0)
+	if err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
+// verifyRecursiveRS 递归验证 G1 份额
+func verifyRecursiveRS(AA *node.Node, shares []*bn256.G1, offset int) (int, *bn256.G1, error) {
+	// 1. 叶子节点
+	if AA.IsLeaf {
+		if offset >= len(shares) {
+			return 0, nil, fmt.Errorf("leaf node [ID:%v]: insufficient shares (offset %d)", AA.Idx, offset)
+		}
+		secretPoint := shares[offset]
+		return 1, secretPoint, nil
+	}
 
-// 原理:
-// 利用对偶码 C_perp 的性质。如果 shares 是合法的 (属于 C)，则对于任意 c_perp in C_perp，
-// 内积 <shares, c_perp> 必须为 0。
-// C_perp 由次数 <= n-k-1 的多项式 f(x) 生成，形式为 (v1*f(1), ..., vn*f(n))。
-func RSCodeVerify(shares []*big.Int, k int) bool {
-	n := len(shares)
+	// 2. 非叶子节点：递归收集子节点的 G1 秘密点
+	childSecrets := make([]*bn256.G1, 0, AA.Childrennum)
+	currentOffset := offset
+
+	for i := 0; i < AA.Childrennum; i++ {
+		if i >= len(AA.Children) || AA.Children[i] == nil {
+			return 0, nil, fmt.Errorf("node [ID:%v]: missing child at index %d", AA.Idx, i)
+		}
+		consumed, childSecret, err := verifyRecursiveRS(AA.Children[i], shares, currentOffset)
+		if err != nil {
+			return 0, nil, err
+		}
+
+		childSecrets = append(childSecrets, childSecret)
+		currentOffset += consumed
+	}
+
+	n := len(childSecrets)
+	k := AA.T
+
+	// 检查门限
 	if n < k {
-		// 如果份额数量少于或等于阈值，无法进行基于冗余的校验，或者认为总是合法（取决于具体协议定义）
-		// 但在 RS 编码理论中，通常 n > k 才有校验意义。
-		// 这里假设 n > k 才是需要验证的情况。
-		fmt.Printf("number of shares must be greater than threshold k for verification\n")
+		return 0, nil, fmt.Errorf("node [ID:%v]: insufficient child secrets (%d < %d)", AA.Idx, n, k)
+	}
+
+	// 3. 调用 RS 验证 (针对 G1 点的版本)
+	if !rscodeVerifyG1(childSecrets, k) {
+		return 0, nil, fmt.Errorf("node [ID:%v]: RS Code verification failed", AA.Idx)
+	}
+
+	// 4. 恢复当前节点的 G1 秘密点
+	// 使用拉格朗日插值法恢复常数项 (Secret Point)
+	// 输入点: (1, childSecrets[0]), (2, childSecrets[1]), ...
+	targetPoint, err := interpolateG1(childSecrets[:k])
+	if err != nil {
+		return 0, nil, fmt.Errorf("node [ID:%v]: reconstruction failed: %w", AA.Idx, err)
+	}
+
+	return currentOffset - offset, targetPoint, nil
+}
+
+func rscodeVerifyG1(shares []*bn256.G1, k int) bool {
+	n := len(shares)
+	if n == k {
+		fmt.Printf("This is \"AND\" structure, skips the RSCode verification!\n")
+		return true
+	}
+	if n < k {
 		return false
 	}
 
-	// 1. 随机选择一个多项式 f(x) 用于生成对偶码向量 c_perp
-	// f(x) 的次数最高为 n - k - 1
+	// 1. 生成随机多项式 f(x) 和 对偶码字 cPerp (逻辑不变)
 	degF := n - k - 1
-
-	// 生成随机系数 f_0, f_1, ..., f_degF
 	fCoeffs := make([]*big.Int, degF+1)
 	for i := 0; i <= degF; i++ {
-		c, err := rand.Int(rand.Reader, bn256.Order)
-		if err != nil {
-			return false
-		}
+		c, _ := rand.Int(rand.Reader, bn256.Order)
 		fCoeffs[i] = c
 	}
 
-	// 2. 计算对偶码向量 c_perp = (y_1, y_2, ..., y_n)
-	// 其中 y_i = v_i * f(i)
-	// v_i = Product_{j!=i} (1 / (i - j))
 	cPerp := make([]*big.Int, n)
-
-	// 预计算所有 v_i
-	// 注意：这里的索引 i 对应的是评估点 x = i+1 (即 1, 2, ..., n)
 	for i := 0; i < n; i++ {
-		x_i := big.NewInt(int64(i + 1)) // 当前点的 x 坐标 (1-based)
+		// ... (保持原有的 cPerp 计算逻辑不变) ...
+		// 为了简洁，这里省略重复代码，逻辑同上文
+		x_i := big.NewInt(int64(i + 1))
 		denom := big.NewInt(1)
 		for j := 0; j < n; j++ {
 			if i == j {
@@ -63,59 +105,101 @@ func RSCodeVerify(shares []*big.Int, k int) bool {
 			x_j := big.NewInt(int64(j + 1))
 			diff := new(big.Int).Sub(x_i, x_j)
 			denom.Mul(denom, diff)
-			denom.Mod(denom, bn256.Order)
 		}
-
-		// 计算 v_i = 1 / Denom mod q
 		v_i := new(big.Int).ModInverse(denom, bn256.Order)
-		if v_i == nil {
-			fmt.Printf("modular inverse failed, q might not be prime or denom is 0\n")
-			return false
-		}
-
-		// 计算 f(x_i)
-		fVal := evalPoly(fCoeffs, x_i, bn256.Order)
-
-		// 计算 y_i = v_i * f(x_i)
-		y_i := new(big.Int).Mul(v_i, fVal)
-		y_i.Mod(y_i, bn256.Order)
-
-		cPerp[i] = y_i
+		fVal := evaluatePolynomial(fCoeffs, x_i, bn256.Order)
+		cPerp[i] = new(big.Int).Mul(v_i, fVal)
+		cPerp[i].Mod(cPerp[i], bn256.Order)
 	}
 
-	// 3. 计算内积 <shares, cPerp>
-	innerProduct := big.NewInt(0)
-	for i := 0; i < n; i++ {
-		term := new(big.Int).Mul(shares[i], cPerp[i])
-		term.Mod(term, bn256.Order)
-		innerProduct.Add(innerProduct, term)
-		innerProduct.Mod(innerProduct, bn256.Order)
-	}
-
-	// 4. 验证
-	// 如果内积为 0，则通过验证（概率极高是合法份额）
-	// 如果内积不为 0，则肯定是非法份额
-	if innerProduct.Cmp(big.NewInt(0)) != 0 {
+	// 2. 使用你提供的方式验证
+	// 生成一个随机的非零点 H1 作为“锚点”
+	// 注意：H1 必须是 G1 上的一个有效点，且不能是无穷远点
+	randScalar, err := rand.Int(rand.Reader, bn256.Order)
+	if err != nil {
 		return false
 	}
+	H1 := new(bn256.G1).ScalarBaseMult(randScalar)
 
-	return true
+	// 初始化 sum = H1
+	sum := new(bn256.G1).Set(H1)
+
+	// 计算 sum = H1 + Sum(cPerp[i] * shares[i])
+	for i := 0; i < n; i++ {
+		term := new(bn256.G1).ScalarMult(shares[i], cPerp[i])
+		sum.Add(sum, term)
+	}
+
+	// 验证 sum 是否等于 H1
+	// 如果 Sum(cPerp[i] * shares[i]) == 0，则 sum == H1 + 0 == H1
+	return bytes.Equal(sum.Marshal(), H1.Marshal())
 }
 
-// evalPoly 计算多项式 f(x) 在点 x 处的值 mod q
-// fCoeffs[0] + fCoeffs[1]*x + fCoeffs[2]*x^2 + ...
-func evalPoly(coeffs []*big.Int, x *big.Int, q *big.Int) *big.Int {
-	result := big.NewInt(0)
-	xPow := big.NewInt(1) // x^0
+// interpolateG1 使用拉格朗日插值法从 G1 点恢复秘密点 (常数项)
+// 假设 x 坐标为 1, 2, ..., k
+func interpolateG1(points []*bn256.G1) (*bn256.G1, error) {
+	k := len(points)
+	if k == 0 {
+		return nil, errors.New("no points provided")
+	}
 
-	for _, coeff := range coeffs {
-		term := new(big.Int).Mul(coeff, xPow)
-		term.Mod(term, q)
+	secret := new(bn256.G1).ScalarBaseMult(big.NewInt(0))
+
+	for i := 0; i < k; i++ {
+		// 计算拉格朗日系数 L_i(0)
+		// L_i(0) = Product_{j!=i} (0 - x_j) / (x_i - x_j)
+		// 这里 x_m = m + 1
+		x_i := big.NewInt(int64(i + 1))
+
+		num := big.NewInt(1) // 分子
+		den := big.NewInt(1) // 分母
+
+		for j := 0; j < k; j++ {
+			if i == j {
+				continue
+			}
+			x_j := big.NewInt(int64(j + 1))
+
+			// 分子 *= (0 - x_j) = -x_j
+			num.Mul(num, new(big.Int).Neg(x_j))
+			num.Mod(num, bn256.Order)
+
+			// 分母 *= (x_i - x_j)
+			diff := new(big.Int).Sub(x_i, x_j)
+			diff.Mod(diff, bn256.Order)
+			den.Mul(den, diff)
+			den.Mod(den, bn256.Order)
+		}
+
+		// 计算系数 = num / den
+		denInv := new(big.Int).ModInverse(den, bn256.Order)
+		if denInv == nil {
+			return nil, errors.New("inverse failed")
+		}
+		coeff := new(big.Int).Mul(num, denInv)
+		coeff.Mod(coeff, bn256.Order)
+
+		// 累加: secret += coeff * points[i]
+		term := new(bn256.G1).ScalarMult(points[i], coeff)
+		secret.Add(secret, term)
+	}
+
+	return secret, nil
+}
+
+// evaluatePolynomial 保持不变 (标量运算)
+func evaluatePolynomial(coefficients []*big.Int, x, order *big.Int) *big.Int {
+	result := new(big.Int).Set(coefficients[0])
+	xPower := new(big.Int).Set(x)
+
+	for i := 1; i < len(coefficients); i++ {
+		term := new(big.Int).Mul(coefficients[i], xPower)
+		term.Mod(term, order)
 		result.Add(result, term)
-		result.Mod(result, q)
+		result.Mod(result, order)
 
-		xPow.Mul(xPow, x)
-		xPow.Mod(xPow, q)
+		xPower.Mul(xPower, x)
+		xPower.Mod(xPower, order)
 	}
 	return result
 }
