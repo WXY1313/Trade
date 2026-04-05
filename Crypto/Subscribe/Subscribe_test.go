@@ -5,7 +5,7 @@ import (
 	"math/big"
 	"testing"
 
-	CPABE "github.com/WXY1313/Trade/Crypto/CPABE/Threshold"
+	"github.com/WXY1313/Trade/Crypto/CPABE"
 	"github.com/fentec-project/bn256"
 	"github.com/fentec-project/gofe/sample"
 	"github.com/stretchr/testify/require"

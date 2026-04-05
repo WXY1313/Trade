@@ -37,41 +37,6 @@ func sssShare(secret *big.Int, n, t int) ([]*big.Int, error) {
 	return shares, nil
 }
 
-func sssRecon(shares []*big.Int, indices []int, t int) (*big.Int, error) {
-	if len(shares) < t {
-		return nil, fmt.Errorf("not enough shares")
-	}
-	shares = shares[:t]
-	indices = indices[:t]
-
-	secret := big.NewInt(0)
-	for i := 0; i < t; i++ {
-		xi := big.NewInt(int64(indices[i]))
-		yi := shares[i]
-
-		numerator := big.NewInt(1)
-		denominator := big.NewInt(1)
-
-		for j := 0; j < t; j++ {
-			if i != j {
-				xj := big.NewInt(int64(indices[j]))
-				numerator.Mul(numerator, new(big.Int).Neg(xj)).Mod(numerator, bn256.Order)
-				diff := new(big.Int).Sub(xi, xj)
-				diff = diff.Mod(diff, bn256.Order)
-				denominator.Mul(denominator, diff).Mod(denominator, bn256.Order)
-			}
-		}
-
-		denomInv := new(big.Int).ModInverse(denominator, bn256.Order)
-		li := new(big.Int).Mul(numerator, denomInv)
-		li = li.Mod(li, bn256.Order)
-
-		term := new(big.Int).Mul(yi, li)
-		secret.Add(secret, term).Mod(secret, bn256.Order)
-	}
-	return secret, nil
-}
-
 func sssReconGT(shares []*bn256.GT, indices []int, t int) (*bn256.GT, error) {
 	if len(shares) < t {
 		return nil, fmt.Errorf("not enough shares")
@@ -183,49 +148,6 @@ func GssShare(s *big.Int, AA *node.Node) (map[string]*big.Int, error) {
 	mapAttrs(AA)
 
 	return sharesMap, nil
-}
-
-// GssRecon 整合了重构逻辑
-func GssRecon(AA *node.Node, shares map[string]*big.Int) (*big.Int, error) {
-	if AA == nil {
-		return nil, errors.New("access structure is nil")
-	}
-
-	// 定义内部递归函数
-	var recon func(n *node.Node) (*big.Int, error)
-	recon = func(n *node.Node) (*big.Int, error) {
-		// 1. 叶子节点：查表
-		if n.IsLeaf {
-			share, ok := shares[n.Attribute]
-			if !ok {
-				return nil, fmt.Errorf("missing share for %s", n.Attribute)
-			}
-			return share, nil
-		}
-
-		// 2. 非叶子节点：收集子节点结果
-		childShares := make([]*big.Int, 0, n.T)
-		childIndices := make([]int, 0, n.T)
-
-		for i, child := range n.Children {
-			share, err := recon(child)
-			if err != nil {
-				continue // 跳过失败的子节点
-			}
-			childShares = append(childShares, share)
-			childIndices = append(childIndices, i+1) // 索引对应 1, 2, 3...
-		}
-
-		// 3. 检查门限
-		if len(childShares) < n.T {
-			return nil, fmt.Errorf("insufficient shares (need %d)", n.T)
-		}
-
-		// 4. 插值
-		return sssRecon(childShares, childIndices, n.T)
-	}
-
-	return recon(AA)
 }
 
 func GetLen(node *node.Node) int {

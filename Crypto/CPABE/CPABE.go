@@ -5,9 +5,8 @@ import (
 	"math/big"
 	"strconv"
 
-	"github.com/WXY1313/Trade/Crypto/CPABE/Threshold/lsss"
-	"github.com/WXY1313/Trade/Crypto/CPABE/Threshold/node"
-	"github.com/WXY1313/Trade/Crypto/CPABE/Threshold/opmatrix"
+	"github.com/WXY1313/Trade/Crypto/CPABE/lsss"
+	"github.com/WXY1313/Trade/Crypto/CPABE/node"
 	"github.com/WXY1313/Trade/Crypto/Operation"
 	"github.com/WXY1313/Trade/Crypto/RScode"
 	"github.com/fentec-project/bn256"
@@ -173,8 +172,7 @@ func CipherCheck(policy *node.Node, path *node.Node, mpk *MPK, ct *ABECiphertext
 	for _, at := range attrSet {
 		Q[at] = ct.C3[at]
 	}
-	recoverResult, _ := lsss.ReconG1(path, Q)
-	fmt.Printf("recoverResult=%v\n", recoverResult)
+	recoverResult, _ := lsss.ReconG1(policy, Q)
 	if !Operation.G1Equal(mpk.H1, recoverResult) {
 		return false
 	}
@@ -206,9 +204,7 @@ func KeyGen(MPK *MPK, MSK *MSK, su []string) (*SK, error) {
 }
 
 func Decrypt(path *node.Node, MPK *MPK, CT *ABECiphertext, SK *SK) (*bn256.GT, error) {
-	// 1. 获取矩阵和行对应的节点映射
-	// 这里直接调用你刚才修改后的 Convert 函数
-	matrix, rowMap := node.Convert(path)
+	_, rowMap := node.Convert(path)
 	goodAttribs := make([]string, len(rowMap))
 	for i := 0; i < len(rowMap); i++ {
 		goodAttribs[i] = rowMap[i].Attribute
@@ -229,81 +225,8 @@ func Decrypt(path *node.Node, MPK *MPK, CT *ABECiphertext, SK *SK) (*bn256.GT, e
 			return nil, fmt.Errorf("attribute %s not in ciphertext dicts", at)
 		}
 	}
-	// 2. 动态构建索引列表 I
-	// 原有的代码依赖全局变量 I，现在我们根据 shares 和 rowMap 动态生成它
-	var I []int
-	for i, node := range rowMap {
-		// 检查该行对应的节点是否是叶子节点（即属性）
-		// 并且检查用户是否拥有该属性（shares 中是否存在）
-		if node.IsLeaf {
-			if _, ok := eggLambda[node.Attribute]; ok {
-				I = append(I, i)
-			}
-		}
-	}
 
-	// 如果没有找到任何匹配的属性，无法恢复
-	if len(I) == 0 {
-		return nil, fmt.Errorf("no valid shares found to satisfy the policy")
-	}
-
-	rows := len(I)
-	// 3. 以下是你原有的逻辑，基本保持不变
-	// Prepare the sub-matrix for reconstruction
-	recMatrix := make([][]*big.Int, rows)
-	//reconRowMap := make([]string, rows)
-	for i := 0; i < rows; i++ {
-		idx := I[i]
-		// 边界检查
-		if idx >= len(matrix) {
-			return nil, fmt.Errorf("Index %d out of range (matrix has %d rows)", idx, len(matrix))
-		}
-		// 取前 'rows' 列构建方阵
-		if len(matrix[idx]) < rows {
-			return nil, fmt.Errorf("Matrix row %d has insufficient columns (%d < %d)", idx, len(matrix[idx]), rows)
-		}
-		recMatrix[i] = matrix[idx][:rows]
-		//reconRowMap[i] = rowMap[idx].Attribute
-	}
-
-	// Compute Inverse Matrix
-	// 调用你原有的函数
-	invRecMatrix, err := opmatrix.GaussJordanInverse(recMatrix)
-	if err != nil {
-		return nil, fmt.Errorf("Matrix inversion failed: %v", err)
-	}
-
-	// 构造单位向量 (1, 0, 0...)
-	one := make([][]*big.Int, 1)
-	one[0] = make([]*big.Int, rows)
-	for i := 0; i < rows; i++ {
-		one[0][i] = big.NewInt(0)
-	}
-	one[0][0] = big.NewInt(1)
-
-	// 计算系数向量 w
-	wMatrix, err := opmatrix.MultiplyMatrix(one, invRecMatrix)
-	if err != nil {
-		return nil, fmt.Errorf("Matrix multiplication (w) failed: %v", err)
-	}
-	cx := make(map[string]*big.Int)
-	for i, at := range goodAttribs {
-		cx[at] = wMatrix[0][i]
-	}
-
-	eggs := new(bn256.GT).ScalarBaseMult(big.NewInt(0))
-	for _, at := range goodAttribs {
-		if eggLambda[at] != nil {
-			sign := cx[at].Cmp(big.NewInt(0))
-			if sign == 1 {
-				eggs.Add(eggs, new(bn256.GT).ScalarMult(eggLambda[at], cx[at]))
-			} else if sign == -1 {
-				eggs.Add(eggs, new(bn256.GT).ScalarMult(new(bn256.GT).Neg(eggLambda[at]), new(big.Int).Abs(cx[at])))
-			}
-		} else {
-			return nil, fmt.Errorf("missing intermediate result")
-		}
-	}
+	eggs, _ := lsss.ReconGT(CT.Policy, eggLambda)
 	eggs = new(bn256.GT).Add(bn256.Pair(SK.K, CT._C), new(bn256.GT).Neg(eggs))
 	M := new(bn256.GT).Add(bn256.Pair(CT.C, MPK.U2), new(bn256.GT).Neg(eggs))
 	return M, nil

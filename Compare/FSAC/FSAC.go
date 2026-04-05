@@ -7,8 +7,10 @@ import (
 	"math/big"
 	"strconv"
 
-	"github.com/WXY1313/Trade/Crypto/CPABE/Threshold/lsss"
-	"github.com/WXY1313/Trade/Crypto/CPABE/Threshold/node"
+	gss "github.com/WXY1313/Trade/Compare/FSAC/GSS"
+	"github.com/WXY1313/Trade/Crypto/CPABE/lsss"
+	"github.com/WXY1313/Trade/Crypto/CPABE/node"
+	"github.com/WXY1313/Trade/Crypto/CPABE/opmatrix"
 	"github.com/WXY1313/Trade/Crypto/SymEnc"
 	"github.com/fentec-project/bn256"
 	"github.com/fentec-project/gofe/sample"
@@ -47,7 +49,7 @@ type FSAC struct {
 }
 
 type FSACCiphertext struct {
-	CT     []byte
+	//CT     []byte
 	Policy *node.Node           // (M, ρ)
 	C      *bn256.GT            //C=h1^m*g1^{alpha*beta}
 	_C     *bn256.G2            //_C=h2^{beta}
@@ -143,15 +145,11 @@ func SanKeyGen(MPK *MPK) (*Key, error) {
 	return &Key{SK: sk, PK: pk}, nil
 }
 
-func Encrypt(MPK *MPK, Mes string, policy *node.Node) (*FSACCiphertext, error) {
+func Encrypt(MPK *MPK, K *bn256.GT, policy *node.Node) (*FSACCiphertext, error) {
 	sampler := sample.NewUniformRange(big.NewInt(1), MPK.Order)
 	C1Set := make(map[string]*bn256.G1)
 	C2Set := make(map[string]*bn256.G1)
 	//Generate the ABE ciphertext
-	k, _ := sampler.Sample()
-	K := new(bn256.GT).ScalarBaseMult(k)
-	ct := SymEnc.XOREncryptDecrypt([]byte(Mes), SymEnc.KDF(K))
-	fmt.Printf("CT=%v\n", string(ct))
 
 	s, _ := sampler.Sample()
 	c := new(bn256.GT).Add(K, new(bn256.GT).ScalarMult(MPK.AlphaGT, s))
@@ -173,7 +171,7 @@ func Encrypt(MPK *MPK, Mes string, policy *node.Node) (*FSACCiphertext, error) {
 	}
 
 	return &FSACCiphertext{
-		CT:     ct,
+		//CT:     ct,
 		Policy: policy, // (M, ρ)
 		C:      c,      //C=e(hG1,uG2)^me(hG1,uG2)^{alpha*beta}
 		_C:     _c,     //_C=gG2^{beta}
@@ -183,7 +181,7 @@ func Encrypt(MPK *MPK, Mes string, policy *node.Node) (*FSACCiphertext, error) {
 
 }
 
-func CipherCheck(MPK *MPK, CT *FSACCiphertext, su []string, path *node.Node) (bool, error) {
+func CipherCheck(MPK *MPK, CT *FSACCiphertext, su []string, policy *node.Node, path *node.Node) (bool, error) {
 	sampler := sample.NewUniformRange(big.NewInt(1), MPK.Order)
 	y, _ := sampler.Sample()
 	u, _ := sampler.Sample()
@@ -196,59 +194,170 @@ func CipherCheck(MPK *MPK, CT *FSACCiphertext, su []string, path *node.Node) (bo
 		kxs[su[i]] = new(bn256.G2).ScalarMult(MPK.HXsG2[su[i]], u)
 	}
 
+	_, rowMap := node.Convert(policy)
+	goodAttribs := make([]string, len(rowMap))
+	for i := 0; i < len(rowMap); i++ {
+		goodAttribs[i] = rowMap[i].Attribute
+	}
+	aToK := make(map[string]*bn256.G2)
+	for at, k := range kxs {
+		aToK[at] = k
+	}
 	ASet := make(map[string]*bn256.GT)
-	for i, _ := range kxs {
-		for _, v := range node.RowToAttrib(CT.Policy) {
-			if i == v {
-				left := bn256.Pair(CT.C1[v], l)
-				right := bn256.Pair(CT.C2[v], kxs[i])
-				ASet[v] = new(bn256.GT).Add(left, right)
-			}
+	for _, at := range goodAttribs {
+		if CT.C1[at] != nil && CT.C2[at] != nil {
+			num := bn256.Pair(CT.C1[at], l)
+			num = num.Add(num, bn256.Pair(CT.C2[at], aToK[at]))
+			ASet[at] = num
+		} else {
+			fmt.Println(CT.C1[at] != nil && CT.C2[at] != nil)
+			return false, fmt.Errorf("attribute %s not in ciphertext dicts", at)
 		}
 	}
-	A, err := lsss.ReconGT(path, ASet)
+	A, err := gss.GssReconGT(policy, ASet)
 	if err != nil {
 		log.Fatalf("Fail to execute LSSSRecon ,Error: %v", err)
 	}
 	A = new(bn256.GT).Add(bn256.Pair(k, CT._C), new(bn256.GT).Neg(A))
 	if !GTEqual(A, bn256.Pair(new(bn256.G1).ScalarBaseMult(y), CT._C)) {
-		fmt.Printf("FSAC CT no Pass the check!!!")
+		fmt.Printf("FSAC CT no Pass the check!!!\n")
 		return false, err
 	}
 	return true, err
 }
 
-func Santize(MPK *MPK, Key *Key, CT *FSACCiphertext) ([]byte, *VKey, error) {
+// FindReconstructionCoefficients 计算重构系数 vi
+// 假设传入的 attributes 数量等于矩阵的列数 (即 M 是方阵)
+func FindReconstructionCoefficients(AA *node.Node, attributes []string) (map[string]*big.Int, error) {
+	// 1. 重新生成矩阵和属性映射 (必须与 Share 函数中使用的一致)
+	matrix, rowMap := node.Convert(AA)
+	if len(matrix) == 0 || len(matrix[0]) == 0 {
+		return nil, fmt.Errorf("matrix is empty")
+	}
+
+	cols := len(matrix[0])
+	//rows := len(matrix)
+
+	// 2. 构建子矩阵 M_sub 和属性查找表
+	// 我们需要找到 attributes 对应的行
+	attrToRowIndex := make(map[string]int)
+	for idx, rowInfo := range rowMap {
+		attrToRowIndex[rowInfo.Attribute] = idx
+	}
+
+	// 提取子矩阵数据 (只提取 attributes 对应的行)
+	var subMatrixData [][]*big.Int
+	var selectedAttrs []string // 保持顺序
+
+	for _, attr := range attributes {
+		rowIdx, exists := attrToRowIndex[attr]
+		if !exists {
+			return nil, fmt.Errorf("attribute %s not found in matrix", attr)
+		}
+		// 深拷贝行数据
+		rowCopy := make([]*big.Int, cols)
+		for i, val := range matrix[rowIdx] {
+			rowCopy[i] = new(big.Int).Set(val)
+		}
+		subMatrixData = append(subMatrixData, rowCopy)
+		selectedAttrs = append(selectedAttrs, attr)
+	}
+
+	// 检查维度：为了使用逆矩阵，行数必须等于列数
+	if len(subMatrixData) != cols {
+		return nil, fmt.Errorf("number of attributes (%d) must equal matrix columns (%d) for inversion", len(subMatrixData), cols)
+	}
+
+	// 3. 构建目标向量 T = [1, 0, 0, ..., 0]
+	targetVector := make([]*big.Int, cols)
+	targetVector[0] = big.NewInt(1)
+	for i := 1; i < cols; i++ {
+		targetVector[i] = big.NewInt(0)
+	}
+
+	// 4. 求解系数 V = T * M_sub^(-1)
+	// 步骤：
+	// a. 计算 M_sub 的逆矩阵 (使用你提供的 GaussJordanInverse)
+	// b. 计算 V = T * Inverse(M_sub)
+
+	inverseMatrix, err := opmatrix.GaussJordanInverse(subMatrixData)
+	if err != nil {
+		return nil, fmt.Errorf("cannot invert sub-matrix: %v", err)
+	}
+
+	// 5. 计算 V = T * Inverse(M_sub)
+	// 注意：T 是 1 x cols 的行向量。
+	// 矩阵乘法：Result[1][cols] = T[1][cols] * Inverse[cols][cols]
+	// 但是我们只需要计算结果行向量。
+
+	resultCoeffs := make([]*big.Int, len(selectedAttrs))
+	for i := 0; i < len(selectedAttrs); i++ {
+		resultCoeffs[i] = big.NewInt(0)
+	}
+
+	// 手动计算行向量乘以矩阵
+	// Result[j] = Sum_over_k ( T[k] * Inverse[k][j] )
+	for j := 0; j < len(selectedAttrs); j++ {
+		sum := big.NewInt(0)
+		for k := 0; k < cols; k++ {
+			// temp = T[k] * Inverse[k][j]
+			temp := new(big.Int).Mul(targetVector[k], inverseMatrix[k][j])
+			// temp = temp mod Order
+			temp.Mod(temp, bn256.Order)
+			sum.Add(sum, temp)
+		}
+		sum.Mod(sum, bn256.Order)
+		resultCoeffs[j] = sum
+	}
+
+	// 6. 打包结果
+	result := make(map[string]*big.Int)
+	for i, attr := range selectedAttrs {
+		result[attr] = resultCoeffs[i]
+	}
+
+	return result, nil
+}
+
+func Santize(MPK *MPK, Key *Key, CT *FSACCiphertext, ct []byte) ([]byte, *VKey, error) {
 	sampler := sample.NewUniformRange(big.NewInt(1), MPK.Order)
 	_k, _ := sampler.Sample()
 	_K := new(bn256.GT).ScalarBaseMult(_k)
-	sanCT := SymEnc.XOREncryptDecrypt(CT.CT, SymEnc.KDF(_K))
+	sanCT := SymEnc.XOREncryptDecrypt(ct, SymEnc.KDF(_K))
 	b, _ := sampler.Sample()
 	v0 := new(bn256.GT).ScalarBaseMult(b)
 	v1 := new(bn256.GT).Add(_K, new(bn256.GT).ScalarMult(Key.PK, b))
 	return sanCT, &VKey{V0: v0, V1: v1}, nil
 }
 
-func Decrypt(MPK *MPK, CT *FSACCiphertext, SK *SK, VKey *VKey, Key *Key, ct []byte, path *node.Node) (string, error) {
+func Decrypt(MPK *MPK, CT *FSACCiphertext, SK *SK, VKey *VKey, Key *Key, ct []byte, policy *node.Node, path *node.Node) (*bn256.GT, *bn256.GT, error) {
+	_, rowMap := node.Convert(path)
+	goodAttribs := make([]string, len(rowMap))
+	for i := 0; i < len(rowMap); i++ {
+		goodAttribs[i] = rowMap[i].Attribute
+	}
+	aToK := make(map[string]*bn256.G2)
+	for at, k := range SK.KXs {
+		aToK[at] = k
+	}
 	ASet := make(map[string]*bn256.GT)
-	for i, _ := range SK.KXs {
-		for _, v := range node.RowToAttrib(path) {
-			if i == v {
-				left := bn256.Pair(CT.C1[v], SK.L)
-				right := bn256.Pair(CT.C2[v], SK.KXs[i])
-				ASet[v] = new(bn256.GT).Add(left, right)
-			}
+	for _, at := range goodAttribs {
+		if CT.C1[at] != nil && CT.C2[at] != nil {
+			num := bn256.Pair(CT.C1[at], SK.L)
+			num = num.Add(num, bn256.Pair(CT.C2[at], aToK[at]))
+			ASet[at] = num
+		} else {
+			fmt.Println(CT.C1[at] != nil && CT.C2[at] != nil)
+			return nil, nil, fmt.Errorf("attribute %s not in ciphertext dicts", at)
 		}
 	}
-	//R ← LSSS.Recon({ ˜Ri}i∈I , τ )
-	A, err := lsss.ReconGT(path, ASet)
+	A, err := lsss.ReconGT(policy, ASet)
 	if err != nil {
 		log.Fatalf("Fail to execute LSSSRecon ,Error: %v", err)
 	}
 	A = new(bn256.GT).Add(bn256.Pair(SK.K, CT._C), new(bn256.GT).Neg(A))
 	K := new(bn256.GT).Add(CT.C, new(bn256.GT).Neg(A))
 	_K := new(bn256.GT).Add(VKey.V1, new(bn256.GT).Neg(new(bn256.GT).ScalarMult(VKey.V0, Key.SK)))
-	temp := SymEnc.XOREncryptDecrypt(ct, SymEnc.KDF(K))
-	_Mes := SymEnc.XOREncryptDecrypt(temp, SymEnc.KDF(_K))
-	return string(_Mes), nil
+
+	return K, _K, nil
 }

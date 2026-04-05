@@ -9,11 +9,10 @@ import (
 	"strings"
 
 	gss "github.com/WXY1313/Trade/Compare/MAABEFE/GSS"
-	"github.com/WXY1313/Trade/Crypto/CPABE/Threshold/lsss"
-	"github.com/WXY1313/Trade/Crypto/CPABE/Threshold/node"
-	"github.com/WXY1313/Trade/Crypto/CPABE/Threshold/opmatrix"
+	"github.com/WXY1313/Trade/Crypto/CPABE/lsss"
+	"github.com/WXY1313/Trade/Crypto/CPABE/node"
+	"github.com/WXY1313/Trade/Crypto/CPABE/opmatrix"
 	"github.com/WXY1313/Trade/Crypto/Operation"
-	"github.com/WXY1313/Trade/Crypto/SymEnc"
 	"github.com/fentec-project/bn256"
 	"github.com/fentec-project/gofe/data"
 	"github.com/fentec-project/gofe/sample"
@@ -87,41 +86,6 @@ func G1ArrayToBigInt(cm *CM, _cm *CM, _dm *bn256.G1) *big.Int {
 	x := new(big.Int).SetBytes(h.Sum(nil))
 	return x.Mod(x, bn256.Order)
 }
-
-// func LSSSRecon(msp *lib.MSP, idToShare map[string]*big.Int) (*big.Int, error) {
-// 	goodMatRows := make([]data.Vector, 0)
-// 	goodHolders := make([]string, 0)
-
-// 	for i, id := range msp.RowToAttrib {
-// 		if idToShare[id] != nil {
-// 			goodMatRows = append(goodMatRows, msp.Mat[i])
-// 			goodHolders = append(goodHolders, id)
-// 		}
-// 	}
-// 	goodMat, err := data.NewMatrix(goodMatRows)
-// 	if err != nil {
-// 		return nil, err
-// 	}
-
-// 	//choose consts c_x, such that \sum c_x A_x = (1,0,...,0)
-// 	// if they don't exist, holders are not ok
-// 	goodCols := goodMat.Cols()
-// 	if goodCols == 0 {
-// 		return nil, fmt.Errorf("no good matrix columns")
-// 	}
-// 	one := data.NewConstantVector(goodCols, big.NewInt(0))
-// 	one[0] = big.NewInt(1)
-// 	c, err := data.GaussianEliminationSolver(goodMat.Transpose(), one, bn256.Order)
-// 	if err != nil {
-// 		return nil, err
-// 	}
-// 	s := big.NewInt(0)
-// 	for i, id := range goodHolders {
-// 		s.Add(s, new(big.Int).Mul(c[i], idToShare[id]))
-// 	}
-// 	s.Mod(s, bn256.Order)
-// 	return s, nil
-// }
 
 // MAABE represents a MAABE scheme.
 type PP struct {
@@ -243,11 +207,10 @@ type CM struct {
 }
 
 type Cipher struct {
-	CM         *CM
-	DM         *bn256.G1
-	Policy     *node.Node
-	Ciphertext []byte // symmetric encryption of the string message
-	SymKey     *bn256.GT
+	CM     *CM
+	DM     *bn256.G1
+	Policy *node.Node
+	SymKey *bn256.GT
 }
 
 type NIZKCipher struct {
@@ -260,7 +223,7 @@ type NIZKCipher struct {
 	Omega  map[string]*big.Int
 }
 
-func Encrypt(pp *PP, m *big.Int, msg string, policy *node.Node, pkSet []*AuthPK) (*Cipher, *NIZKCipher, error) {
+func Encrypt(pp *PP, m *big.Int, policy *node.Node, pkSet []*AuthPK) (*Cipher, *NIZKCipher, error) {
 	sampler := sample.NewUniform(pp.P)
 	// sanity checks
 	attribs := make(map[string]bool)
@@ -273,14 +236,10 @@ func Encrypt(pp *PP, m *big.Int, msg string, policy *node.Node, pkSet []*AuthPK)
 		attribs[attr] = true
 	}
 
-	if len(msg) == 0 {
-		return nil, nil, fmt.Errorf("message cannot be empty")
-	}
 	// msg is encrypted with AES-CBC with a random key that is encrypted with
 	// MA-ABE
 	// generate secret key
-	symKey := new(bn256.GT).ScalarBaseMult(m)
-	ciphertext := SymEnc.XOREncryptDecrypt([]byte(msg), SymEnc.KDF(symKey))
+
 	// now encrypt symKey with MA-ABE
 	// rand generator
 
@@ -368,11 +327,11 @@ func Encrypt(pp *PP, m *big.Int, msg string, policy *node.Node, pkSet []*AuthPK)
 	}
 
 	Cipher := &Cipher{
-		CM:         cm,
-		Policy:     policy,
-		Ciphertext: ciphertext,
-		SymKey:     symKey,
-		DM:         dm,
+		CM:     cm,
+		Policy: policy,
+		//Ciphertext: ciphertext,
+		//SymKey:     symKey,
+		DM: dm,
 	}
 
 	//Generate NIZK proof
@@ -532,15 +491,15 @@ func CheckCipher(pp *PP, cipher *Cipher, cipherNIZK *NIZKCipher, pkSet []*AuthPK
 	return true
 }
 
-func Decrypt(pp *PP, ct *Cipher, akSet []*AttrKey, path *node.Node) (string, error) {
+func Decrypt(pp *PP, ct *Cipher, akSet []*AttrKey, path *node.Node) (*bn256.GT, error) {
 	// sanity checks
 	if len(akSet) == 0 {
-		return "", fmt.Errorf("empty set of attribute keys")
+		return nil, fmt.Errorf("empty set of attribute keys")
 	}
 	gid := akSet[0].Gid
 	for _, k := range akSet {
 		if k.Gid != gid {
-			return "", fmt.Errorf("not all GIDs are the same")
+			return nil, fmt.Errorf("not all GIDs are the same")
 		}
 	}
 	// get hashed GID
@@ -549,7 +508,7 @@ func Decrypt(pp *PP, ct *Cipher, akSet []*AttrKey, path *node.Node) (string, err
 	//	return "", err
 	//}
 	// find out which attributes are valid and extract them
-	matrix, rowMap := node.Convert(path)
+	_, rowMap := node.Convert(path)
 	goodAttribs := make([]string, len(rowMap))
 	for i := 0; i < len(rowMap); i++ {
 		goodAttribs[i] = rowMap[i].Attribute
@@ -569,88 +528,12 @@ func Decrypt(pp *PP, ct *Cipher, akSet []*AttrKey, path *node.Node) (string, err
 			eggLambda[at] = num
 		} else {
 			fmt.Println(ct.CM.C1x[at] != nil, ct.CM.C2x[at] != nil, ct.CM.C3x[at] != nil, ct.CM.C4x[at] != nil)
-			return "", fmt.Errorf("attribute %s not in ciphertext dicts", at)
+			return nil, fmt.Errorf("attribute %s not in ciphertext dicts", at)
 		}
 	}
 
-	// 2. 动态构建索引列表 I
-	// 原有的代码依赖全局变量 I，现在我们根据 shares 和 rowMap 动态生成它
-	var I []int
-	for i, node := range rowMap {
-		// 检查该行对应的节点是否是叶子节点（即属性）
-		// 并且检查用户是否拥有该属性（shares 中是否存在）
-		if node.IsLeaf {
-			if _, ok := eggLambda[node.Attribute]; ok {
-				I = append(I, i)
-			}
-		}
-	}
-
-	// 如果没有找到任何匹配的属性，无法恢复
-	if len(I) == 0 {
-		return "", fmt.Errorf("no valid shares found to satisfy the policy")
-	}
-
-	rows := len(I)
-	// 3. 以下是你原有的逻辑，基本保持不变
-	// Prepare the sub-matrix for reconstruction
-	recMatrix := make([][]*big.Int, rows)
-	//reconRowMap := make([]string, rows)
-	for i := 0; i < rows; i++ {
-		idx := I[i]
-		// 边界检查
-		if idx >= len(matrix) {
-			return "", fmt.Errorf("Index %d out of range (matrix has %d rows)", idx, len(matrix))
-		}
-		// 取前 'rows' 列构建方阵
-		if len(matrix[idx]) < rows {
-			return "", fmt.Errorf("Matrix row %d has insufficient columns (%d < %d)", idx, len(matrix[idx]), rows)
-		}
-		recMatrix[i] = matrix[idx][:rows]
-		//reconRowMap[i] = rowMap[idx].Attribute
-	}
-
-	// Compute Inverse Matrix
-	// 调用你原有的函数
-	invRecMatrix, err := opmatrix.GaussJordanInverse(recMatrix)
-	if err != nil {
-		return "", fmt.Errorf("Matrix inversion failed: %v", err)
-	}
-
-	// 构造单位向量 (1, 0, 0...)
-	one := make([][]*big.Int, 1)
-	one[0] = make([]*big.Int, rows)
-	for i := 0; i < rows; i++ {
-		one[0][i] = big.NewInt(0)
-	}
-	one[0][0] = big.NewInt(1)
-
-	// 计算系数向量 w
-	wMatrix, err := opmatrix.MultiplyMatrix(one, invRecMatrix)
-	if err != nil {
-		return "", fmt.Errorf("Matrix multiplication (w) failed: %v", err)
-	}
-	cx := make(map[string]*big.Int)
-	for i, at := range goodAttribs {
-		cx[at] = wMatrix[0][i]
-	}
-
-	eggs := new(bn256.GT).ScalarBaseMult(big.NewInt(0))
-	for _, at := range goodAttribs {
-		if eggLambda[at] != nil {
-			sign := cx[at].Cmp(big.NewInt(0))
-			if sign == 1 {
-				eggs.Add(eggs, new(bn256.GT).ScalarMult(eggLambda[at], cx[at]))
-			} else if sign == -1 {
-				eggs.Add(eggs, new(bn256.GT).ScalarMult(new(bn256.GT).Neg(eggLambda[at]), new(big.Int).Abs(cx[at])))
-			}
-		} else {
-			return "", fmt.Errorf("missing intermediate result")
-		}
-	}
+	eggs, _ := lsss.ReconGT(ct.Policy, eggLambda)
 	// calculate key for symmetric encryption
 	symKey := new(bn256.GT).Add(bn256.Pair(ct.CM.C0, pp.G2), new(bn256.GT).Neg(eggs))
-	msg := SymEnc.XOREncryptDecrypt(ct.Ciphertext, SymEnc.KDF(symKey))
-	fmt.Println(string(msg))
-	return string(msg), nil
+	return symKey, nil
 }

@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"math/big"
 
-	"github.com/WXY1313/Trade/Crypto/CPABE/Threshold/node"
+	"github.com/WXY1313/Trade/Crypto/CPABE/node"
 	"github.com/fentec-project/bn256"
 )
 
@@ -77,7 +77,7 @@ func verifyRecursiveRS(AA *node.Node, shares []*bn256.G1, offset int) (int, *bn2
 func rscodeVerifyG1(shares []*bn256.G1, k int) bool {
 	n := len(shares)
 	if n == k {
-		fmt.Printf("This is \"AND\" structure, skips the RSCode verification!\n")
+		//fmt.Printf("This is \"AND\" structure, skips the RSCode verification!\n")
 		return true
 	}
 	if n < k {

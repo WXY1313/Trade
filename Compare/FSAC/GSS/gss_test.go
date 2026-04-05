@@ -1,32 +1,20 @@
-package CPABE
+package gss
 
 import (
+	"crypto/rand"
 	"fmt"
+
 	"math/big"
-	"strconv"
+
 	"testing"
 
-	"github.com/WXY1313/Trade/Crypto/CPABE/Threshold/node"
+	"github.com/WXY1313/Trade/Crypto/CPABE/node"
 	"github.com/WXY1313/Trade/Crypto/Operation"
-	"github.com/fentec-project/gofe/sample"
-	"github.com/stretchr/testify/require"
+	"github.com/fentec-project/bn256"
+	// "pvgss/crypto/gss"
 )
 
-func TestAll(t *testing.T) {
-	//Setup
-	MPK, MSK, err := Setup()
-
-	//KeyGen
-	var userAttrs []string
-	for i := 1; i <= 10; i++ {
-		userAttrs = append(userAttrs, "Attr"+strconv.Itoa(i)) // A1, A2, ..., A100
-	}
-	//KeyGen
-	SK, err := KeyGen(MPK, MSK, userAttrs)
-	require.NoError(t, err)
-	require.NotNil(t, SK)
-
-	//Encrypt
+func TestGSS(t *testing.T) {
 	//Access Policy
 	root := node.NewNode(false, 3, 3, big.NewInt(int64(0)), "")
 	P_1 := node.NewNode(false, 3, 2, big.NewInt(int64(1)), "")
@@ -54,23 +42,30 @@ func TestAll(t *testing.T) {
 	P_E = node.NewNode(true, 0, 1, big.NewInt(int64(1)), "Attr5")
 	P_2.Children = []*node.Node{P_E}
 
-	sampler := sample.NewUniformRange(big.NewInt(1), MPK.Order)
-	m, _ := sampler.Sample()
-	ABECT, err := Encrypt(MPK, m, root)
+	secret, _ := rand.Int(rand.Reader, bn256.Order)
+
+	// test GrpGSSShare
+	shares, err := GssShare(secret, root)
 	if err != nil {
-		t.Errorf("fail to generate ABE ciphertext")
-		return
+		t.Errorf("GSSShare failed: %v", err)
+	}
+	fmt.Println("Shares generated successfully!")
+
+	if len(shares) != GetLen(root) {
+		t.Errorf("Shares length mismatch: expected %d, got %d", GetLen(root), len(shares))
 	}
 
-	//CipherCheck
-	verResult := CipherCheck(root, path, MPK, ABECT)
-	fmt.Printf("The ciphertext verification is %v\n", verResult)
+	attrSet := node.RowToAttrib(path)
+	Q := make(map[string]*bn256.GT)
+	for _, at := range attrSet {
+		Q[at] = new(bn256.GT).ScalarBaseMult(shares[at])
+	}
 
-	//Decrypt
-
-	recoverMessage, err := Decrypt(path, MPK, ABECT, SK)
-	if !Operation.GTEqual(ABECT.Message, recoverMessage) {
-		t.Fatalf("decryption failed: Kθ mismatch\noriginal: %v\nrecovered: %v",
-			ABECT.Message, recoverMessage)
+	recoveredSecret, _ := GssReconGT(path, Q)
+	fmt.Println("orignal secret = ", secret)
+	fmt.Println("recover secret = ", recoveredSecret)
+	// Verify that the recovered secret is the same as the original secret
+	if !Operation.GTEqual(new(bn256.GT).ScalarBaseMult(secret), recoveredSecret) {
+		t.Errorf("Secret reconstruction mismatch: expected %v, got %v", secret, recoveredSecret)
 	}
 }
