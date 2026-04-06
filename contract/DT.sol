@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.0;
 
-contract DT{
+contract Trade{
     struct G1Point {
         uint X;
         uint Y;

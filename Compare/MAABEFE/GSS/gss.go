@@ -8,6 +8,7 @@ import (
 	"math/big"
 
 	"github.com/WXY1313/Trade/Crypto/CPABE/node"
+
 	"github.com/fentec-project/bn256"
 )
 

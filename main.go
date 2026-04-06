@@ -2,12 +2,13 @@
 package main
 
 import (
-	Contract "PRE/gen"
 	"context"
 	"fmt"
 	"log"
 	"math/big"
 	"os"
+
+	Contract "github.com/WXY1313/Trade/gen"
 
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/accounts/keystore"

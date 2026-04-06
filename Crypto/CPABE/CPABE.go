@@ -9,6 +9,7 @@ import (
 	"github.com/WXY1313/Trade/Crypto/CPABE/node"
 	"github.com/WXY1313/Trade/Crypto/Operation"
 	"github.com/WXY1313/Trade/Crypto/RScode"
+
 	"github.com/fentec-project/bn256"
 	"github.com/fentec-project/gofe/data"
 	"github.com/fentec-project/gofe/sample"

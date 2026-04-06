@@ -10,6 +10,7 @@ import (
 
 	"github.com/WXY1313/Trade/Crypto/CPABE/node"
 	"github.com/WXY1313/Trade/Crypto/SymEnc"
+
 	"github.com/fentec-project/bn256"
 	"github.com/stretchr/testify/assert"
 )

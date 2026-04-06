@@ -8,7 +8,8 @@ import (
 
 	"testing"
 
-	"github.com/WXY1313/Trade/Crypto/CPABE/node"
+	"Trade/Crypto/CPABE/node"
+
 	"github.com/fentec-project/bn256"
 	// "pvgss/crypto/gss"
 )

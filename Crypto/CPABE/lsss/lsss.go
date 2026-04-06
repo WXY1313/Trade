@@ -7,6 +7,7 @@ import (
 
 	"github.com/WXY1313/Trade/Crypto/CPABE/node"
 	"github.com/WXY1313/Trade/Crypto/CPABE/opmatrix"
+
 	"github.com/fentec-project/bn256"
 )
 

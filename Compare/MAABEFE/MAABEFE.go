@@ -13,6 +13,7 @@ import (
 	"github.com/WXY1313/Trade/Crypto/CPABE/node"
 	"github.com/WXY1313/Trade/Crypto/CPABE/opmatrix"
 	"github.com/WXY1313/Trade/Crypto/Operation"
+
 	"github.com/fentec-project/bn256"
 	"github.com/fentec-project/gofe/data"
 	"github.com/fentec-project/gofe/sample"

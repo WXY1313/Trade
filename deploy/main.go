@@ -2,7 +2,6 @@
 package main
 
 import (
-	hello "PRE/gen"
 	"context"
 	"fmt"
 	"log"
