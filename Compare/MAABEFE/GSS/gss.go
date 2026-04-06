@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"math/big"
 
-	"github.com/WXY1313/Trade/Crypto/CPABE/node"
+	"github.com/WXY1313/Trade/crypto/CPABE/node"
 	"github.com/fentec-project/bn256"
 )
 
@@ -70,63 +70,6 @@ func sssRecon(shares []*big.Int, indices []int, t int) (*big.Int, error) {
 		secret.Add(secret, term).Mod(secret, bn256.Order)
 	}
 	return secret, nil
-}
-
-func sssReconGT(shares []*bn256.GT, indices []int, t int) (*bn256.GT, error) {
-	if len(shares) < t {
-		return nil, fmt.Errorf("not enough shares")
-	}
-
-	shares = shares[:t]
-	indices = indices[:t]
-
-	// 初始化为 GT 单位元（很关键！）
-	result := new(bn256.GT).ScalarBaseMult(big.NewInt(0)) // g^0 = 1
-
-	for i := 0; i < t; i++ {
-		xi := big.NewInt(int64(indices[i]))
-		yi := shares[i]
-
-		if yi == nil {
-			return nil, fmt.Errorf("nil share at index %d", i)
-		}
-
-		numerator := big.NewInt(1)
-		denominator := big.NewInt(1)
-
-		for j := 0; j < t; j++ {
-			if i != j {
-				xj := big.NewInt(int64(indices[j]))
-
-				// numerator *= -xj
-				numerator.Mul(numerator, new(big.Int).Neg(xj))
-				numerator.Mod(numerator, bn256.Order)
-
-				// denominator *= (xi - xj)
-				diff := new(big.Int).Sub(xi, xj)
-				diff.Mod(diff, bn256.Order)
-
-				denominator.Mul(denominator, diff)
-				denominator.Mod(denominator, bn256.Order)
-			}
-		}
-
-		denomInv := new(big.Int).ModInverse(denominator, bn256.Order)
-		if denomInv == nil {
-			return nil, fmt.Errorf("denominator inverse does not exist")
-		}
-
-		li := new(big.Int).Mul(numerator, denomInv)
-		li.Mod(li, bn256.Order)
-
-		// 🔥 核心：GT 幂运算
-		term := new(bn256.GT).ScalarMult(yi, li)
-
-		// 🔥 累乘
-		result.Add(result, term)
-	}
-
-	return result, nil
 }
 
 // ==========================
@@ -238,46 +181,4 @@ func GetLen(node *node.Node) int {
 		}
 		return length
 	}
-}
-
-func GssReconGT(AA *node.Node, shares map[string]*bn256.GT) (*bn256.GT, error) {
-	if AA == nil {
-		return nil, errors.New("access structure is nil")
-	}
-
-	// 定义内部递归函数
-	var recon func(n *node.Node) (*bn256.GT, error)
-	recon = func(n *node.Node) (*bn256.GT, error) {
-		// 1. 叶子节点：查表
-		if n.IsLeaf {
-			share, ok := shares[n.Attribute]
-			if !ok {
-				return nil, fmt.Errorf("missing share for %s", n.Attribute)
-			}
-			return share, nil
-		}
-
-		// 2. 非叶子节点：收集子节点结果
-		childShares := make([]*bn256.GT, 0, n.T)
-		childIndices := make([]int, 0, n.T)
-
-		for i, child := range n.Children {
-			share, err := recon(child)
-			if err != nil {
-				continue // 跳过失败的子节点
-			}
-			childShares = append(childShares, share)
-			childIndices = append(childIndices, i+1) // 索引对应 1, 2, 3...
-		}
-
-		// 3. 检查门限
-		if len(childShares) < n.T {
-			return nil, fmt.Errorf("insufficient shares (need %d)", n.T)
-		}
-
-		// 4. 插值
-		return sssReconGT(childShares, childIndices, n.T)
-	}
-
-	return recon(AA)
 }

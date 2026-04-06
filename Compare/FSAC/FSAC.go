@@ -8,10 +8,10 @@ import (
 	"strconv"
 
 	gss "github.com/WXY1313/Trade/Compare/FSAC/GSS"
-	"github.com/WXY1313/Trade/Crypto/CPABE/lsss"
-	"github.com/WXY1313/Trade/Crypto/CPABE/node"
-	"github.com/WXY1313/Trade/Crypto/CPABE/opmatrix"
-	"github.com/WXY1313/Trade/Crypto/SymEnc"
+	"github.com/WXY1313/Trade/crypto/CPABE/lsss"
+	"github.com/WXY1313/Trade/crypto/CPABE/node"
+	"github.com/WXY1313/Trade/crypto/CPABE/opmatrix"
+	"github.com/WXY1313/Trade/crypto/SymEnc"
 	"github.com/fentec-project/bn256"
 	"github.com/fentec-project/gofe/sample"
 )

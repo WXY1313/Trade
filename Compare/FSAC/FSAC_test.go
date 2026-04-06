@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/WXY1313/Trade/Crypto/CPABE/node"
-	"github.com/WXY1313/Trade/Crypto/SymEnc"
+	"github.com/WXY1313/Trade/crypto/CPABE/node"
+	"github.com/WXY1313/Trade/crypto/SymEnc"
 	"github.com/fentec-project/bn256"
 	"github.com/fentec-project/gofe/sample"
 	"github.com/stretchr/testify/require"
@@ -62,11 +62,10 @@ func TestAll(t *testing.T) {
 	fmt.Printf("CT=%v\n", string(ct))
 
 	var CT *FSACCiphertext
-	//var secret *big.Int
-	//var lambdaSet map[string]*big.Int
+
 	starttime := time.Now().UnixMicro()
 	for k := 0; k < int(n); k++ {
-		_, _, CT, err = Encrypt(MPK, K, root)
+		CT, err = Encrypt(MPK, K, root)
 	}
 	endtime := time.Now().UnixMicro()
 	fmt.Printf("Encrypt Algorithm Time Used is %.2f ms\n", (float64(endtime-starttime)/n)/float64(1000))
@@ -75,10 +74,6 @@ func TestAll(t *testing.T) {
 		t.Errorf("fail to generate ABE ciphertext")
 		return
 	}
-
-	attrSet := []string{"Attr1", "Attr3", "Attr4", "Attr5"}
-	coeffiShare, _ := FindReconstructionCoefficients(root, attrSet)
-	fmt.Printf("coefficent = %v\n", coeffiShare)
 
 	//CipherCheck
 	var resultCipher bool
