@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"math/big"
 
-	"github.com/WXY1313/Trade/crypto/CPABE/node"
-	"github.com/WXY1313/Trade/crypto/CPABE/opmatrix"
+	"github.com/WXY1313/Trade/Crypto/CPABE/node"
+	"github.com/WXY1313/Trade/Crypto/CPABE/opmatrix"
 	"github.com/fentec-project/bn256"
 )
 

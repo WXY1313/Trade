@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/WXY1313/Trade/crypto/CPABE/node"
-	"github.com/WXY1313/Trade/crypto/SymEnc"
+	"github.com/WXY1313/Trade/Crypto/CPABE/node"
+	"github.com/WXY1313/Trade/Crypto/SymEnc"
 	"github.com/fentec-project/bn256"
 	"github.com/fentec-project/gofe/sample"
 	"github.com/stretchr/testify/assert"
