@@ -8,6 +8,8 @@ import (
 	"math/big"
 	"os"
 
+	gen "github.com/WXY1313/Trade/gen"
+
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/accounts/keystore"
 	"github.com/ethereum/go-ethereum/crypto"
@@ -39,10 +41,10 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	gasPrice, err := client.SuggestGasPrice(context.Background())
-	if err != nil {
-		log.Fatal(err)
-	}
+	// gasPrice, err := client.SuggestGasPrice(context.Background())
+	// if err != nil {
+	// 	log.Fatal(err)
+	// }
 	chainId, err := client.NetworkID(context.Background())
 	if err != nil {
 		log.Fatal(err)
@@ -51,10 +53,11 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	auth.GasPrice = gasPrice
-	auth.GasLimit = uint64(30000000)
+	//auth.GasPrice = gasPrice
+	auth.GasPrice = big.NewInt(5e8)
+	auth.GasLimit = uint64(16777216)
 	auth.Nonce = big.NewInt(int64(nonce))
-	a, tx, _, err := hello.DeployContract(auth, client)
+	a, tx, _, err := gen.DeployContract(auth, client)
 	if err != nil {
 		log.Fatal(err)
 	}

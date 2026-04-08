@@ -37,7 +37,7 @@ type ABECiphertext struct {
 	Com     *bn256.G1            // Com = g1^m
 	Policy  *node.Node           // (M, ρ)
 	C       *bn256.G1            //C=h1^m*g1^{alpha*beta}
-	_C      *bn256.G2            //_C=h2^{beta}
+	C_      *bn256.G2            //_C=h2^{beta}
 	C1      map[string]*bn256.G1 //Ci  = w1^{λi}hiG1^{-ri}
 	C2      map[string]*bn256.G1 //Ci' = g1^{ri}
 	C3      map[string]*bn256.G1 //Ci''=g^{λi}
@@ -46,7 +46,7 @@ type ABECiphertext struct {
 func Setup() (*MPK, *MSK, error) {
 	//Generate sytem attribute set
 	var attributeUniverse []string
-	for i := 1; i <= 100; i++ {
+	for i := 1; i <= 20; i++ {
 		attributeUniverse = append(attributeUniverse, "Attr"+strconv.Itoa(i)) // Attr1, Attr2, ..., Attr100
 	}
 	sampler := sample.NewUniformRange(big.NewInt(1), bn256.Order)
@@ -145,7 +145,7 @@ func Encrypt(MPK *MPK, m *big.Int, policy *node.Node) (*ABECiphertext, error) {
 		Com:     com,    // Com = gG1^m
 		Policy:  policy, // (M, ρ)
 		C:       c,      //C=e(hG1,uG2)^me(hG1,uG2)^{alpha*beta}
-		_C:      _c,     //_C=gG2^{beta}
+		C_:      _c,     //_C=gG2^{beta}
 		C1:      C1Set,  //Ci  = h^{a*λi}hiG1^{-ri}
 		C2:      C2Set,  //Ci' = hG1^{ri}
 		C3:      C3Set,  //Ci''=h^{λi}
@@ -153,17 +153,16 @@ func Encrypt(MPK *MPK, m *big.Int, policy *node.Node) (*ABECiphertext, error) {
 }
 
 func CipherCheck(policy *node.Node, path *node.Node, mpk *MPK, ct *ABECiphertext) bool {
-	if !Operation.GTEqual(bn256.Pair(ct.C, mpk.G2), new(bn256.GT).Add(bn256.Pair(ct.Com, mpk.H2), bn256.Pair(mpk.AlphaG1, ct._C))) {
+	if !Operation.GTEqual(bn256.Pair(ct.C, mpk.G2), new(bn256.GT).Add(bn256.Pair(ct.Com, mpk.H2), bn256.Pair(mpk.AlphaG1, ct.C_))) {
 		return false
 	}
 	var C3Set []*bn256.G1
 	for _, at := range node.RowToAttrib(policy) {
-		if !Operation.GTEqual(bn256.Pair(ct.C1[at], mpk.G2), new(bn256.GT).Add(bn256.Pair(ct.C3[at], ct._C), bn256.Pair(new(bn256.G1).Neg(ct.C2[at]), mpk.HXsG2[at]))) {
+		if !Operation.GTEqual(bn256.Pair(ct.C1[at], mpk.G2), new(bn256.GT).Add(bn256.Pair(ct.C3[at], ct.C_), bn256.Pair(new(bn256.G1).Neg(ct.C2[at]), mpk.HXsG2[at]))) {
 			return false
 		}
 		C3Set = append(C3Set, ct.C3[at])
 	}
-
 	verResultRS, _ := RScode.RecurRSCode(policy, C3Set)
 	if !verResultRS {
 		return false
@@ -228,7 +227,7 @@ func Decrypt(path *node.Node, MPK *MPK, CT *ABECiphertext, SK *SK) (*bn256.GT, e
 	}
 
 	eggs, _ := lsss.ReconGT(CT.Policy, eggLambda)
-	eggs = new(bn256.GT).Add(bn256.Pair(SK.K, CT._C), new(bn256.GT).Neg(eggs))
+	eggs = new(bn256.GT).Add(bn256.Pair(SK.K, CT.C_), new(bn256.GT).Neg(eggs))
 	M := new(bn256.GT).Add(bn256.Pair(CT.C, MPK.U2), new(bn256.GT).Neg(eggs))
 	return M, nil
 }

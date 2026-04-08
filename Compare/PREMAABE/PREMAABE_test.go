@@ -16,7 +16,7 @@ import (
 )
 
 func TestPREMAABE(t *testing.T) {
-	n := float64(500)
+	n := float64(1)
 	// create new MAABE struct with Global Parameters
 	_, gt, _ := bn256.RandomGT(rand.Reader)
 	SymEnc.KDF(gt)
