@@ -175,50 +175,261 @@ contract Trade{
 	}
 
 //================================Access Policy========================================//
-    struct Node {
-        bool isLeaf;              
-        uint256 threshold;       
-        bytes32 attribute;        
-        uint256[] childrenIds;    
-	}
+//================================Access Policy========================================//
 
-    struct NodeInput {
-        uint256 id;              
-        bool isLeaf;
-        uint256 threshold;
-        uint256 idx;             
-        bytes32 attribute;
-        uint256[] childrenIds;
-    }
-    mapping(uint256 => Node) public accessTree; 
-    uint256 public rootNodeId;
+ //==================== Access Tree ====================//
+struct Node {
+    bool IsLeaf;
+    uint256 Childrennum;
+    uint256 T;
+    uint256 Idx;
+    bytes32 Attribute;
+    uint256[] ChildrenIds;
+}
 
-    function uploadAccessTree(NodeInput[] memory _nodes) public {
-        //require(!treeUploaded, "Access tree has already been uploaded");
-        require(_nodes.length > 0, "Node array cannot be empty");
+struct NodeInput {
+    uint256 Id;
+    bool IsLeaf;
+    uint256 Childrennum;
+    uint256 T;
+    uint256 Idx;
+    bytes32 Attribute;
+    uint256[] ChildrenIds;
+}
+mapping(uint256 => Node) internal accessTree;
+// 假设 accessTree 已在全局定义
+// mapping(uint256 => Node) internal accessTree;
 
-        for (uint i = 0; i < _nodes.length; i++) {
-            NodeInput memory inputNode = _nodes[i];
-            // 注意：这里可以添加更多校验逻辑，例如检查 ID 是否唯一、是否超出范围等
-            // require(...);
+//==================== RSCode ====================//
 
-            Cipher.C1.Policy[inputNode.id] = Node({
-                isLeaf: inputNode.isLeaf,
-                threshold: inputNode.threshold,
-                attribute: inputNode.attribute,
-                childrenIds: inputNode.childrenIds
-            });
+/**
+ * @dev 入口函数：接收序列化的策略数组和份额，进行即时验证
+ */
+function RecurRSCode(
+    NodeInput[] memory policy, 
+    G1Point[] memory shares
+) public view returns (bool success) {
+    require(policy.length > 0, "Policy is empty");
+    require(shares.length > 0, "Shares is empty");
+
+    // 1. 获取根节点 ID
+    uint256 rootId = policy[0].Id;
+
+    // 2. 启动递归验证
+    // 直接把 policy 数组传进去，不再依赖 accessTree mapping
+    (uint256 _consumed, G1Point memory _secret) = verifyRecursiveRS(rootId, policy, shares, 0);
+
+    return true;
+}
+
+
+/**
+ * @dev 递归验证主函数
+ * @param nodeId 当前节点 ID
+ * @param policy 完整的策略数组（用于查找当前节点信息）
+ * @param shares 份额数组
+ * @param shareIndex 当前份额索引
+ */
+function verifyRecursiveRS(
+    uint256 nodeId,
+    NodeInput[] memory policy, // <--- 新增：传入策略数组
+    G1Point[] memory shares,
+    uint256 shareIndex
+) internal view returns (uint256 consumed, G1Point memory secret) {
+    
+    // 1. 在 policy 数组中查找当前节点
+    // 注意：这里使用简单的线性搜索。如果树很大，这会比 mapping 慢，但对于验证逻辑是安全的。
+    NodeInput memory node;
+    bool found = false;
+    for (uint256 i = 0; i < policy.length; i++) {
+        if (policy[i].Id == nodeId) {
+            node = policy[i];
+            found = true;
+            break;
         }
     }
+    require(found, "Node not found in policy");
 
-    function getNode(uint256 _nodeId) public view returns (bool, uint256, bytes32, uint256[] memory) {
-        Node memory node = accessTree[_nodeId];
-        return (node.isLeaf, node.threshold, node.attribute, node.childrenIds);
+    // 2. 叶子节点处理
+    if (node.IsLeaf) {
+        require(shareIndex < shares.length, "Insufficient shares");
+        return (1, shares[shareIndex]);
+    }
+
+    // 3. 非叶子节点：递归收集子节点的 G1 秘密点
+    // 使用 node.Childrennum 初始化数组
+    G1Point[] memory childSecrets = new G1Point[](node.Childrennum);
+    uint256 currentOffset = shareIndex;
+
+    for (uint256 i = 0; i < node.Childrennum; i++) {
+        // 确保子节点 ID 存在
+        require(i < node.ChildrenIds.length, "Missing child ID");
+        
+        uint256 childConsumed;
+        G1Point memory childSecret;
+        
+        // 递归调用：传入 policy 数组
+        (childConsumed, childSecret) = verifyRecursiveRS(node.ChildrenIds[i], policy, shares, currentOffset);
+        
+        childSecrets[i] = childSecret;
+        currentOffset += childConsumed;
+    }
+
+    uint256 n = node.Childrennum;
+    uint256 k = node.T;
+
+    require(n >= k, "Insufficient child secrets");
+
+    // 4. 调用 RS 验证
+    require(rscodeVerifyG1(childSecrets, k), "RS Code verification failed");
+
+    // 5. 恢复当前节点的 G1 秘密点
+    G1Point[] memory pointsToInterpolate = new G1Point[](k);
+    for (uint256 i = 0; i < k; i++) {
+        pointsToInterpolate[i] = childSecrets[i];
     }
     
-    function getRootNode() public view returns (bool, uint256, bytes32, uint256[] memory) {
-        return getNode(rootNodeId);
+    secret = interpolateG1(pointsToInterpolate);
+
+    consumed = currentOffset - shareIndex;
+}
+
+/**
+ * @dev RS 编码验证 (修正了 blockhash 依赖)
+ */
+function rscodeVerifyG1(
+    G1Point[] memory shares,
+    uint256 k
+) internal view returns (bool) {
+    uint256 n = shares.length;
+
+    if (n == k) {
+        return true; 
     }
+    if (n < k) {
+        return false;
+    }
+
+    // ==========================================
+    // 1. 生成确定性随机种子 (移除 blockhash 依赖)
+    // ==========================================
+    // 使用 shares 的内容作为种子，确保同样的输入永远生成同样的随机数
+    uint256 seed = uint256(keccak256(abi.encodePacked(shares[0].X, shares[0].Y, n, k)));
+    
+    uint256 degF = n - k - 1;
+    uint256[] memory fCoeffs = new uint256[](degF + 1);
+    
+    for (uint256 i = 0; i <= degF; i++) {
+        fCoeffs[i] = uint256(keccak256(abi.encodePacked(seed, i))) % CURVE_ORDER;
+    }
+
+    // ==========================================
+    // 2. 生成随机锚点 H1
+    // ==========================================
+    uint256 randScalar = uint256(keccak256(abi.encodePacked(seed, "H1_GENERATOR"))) % CURVE_ORDER;
+    if (randScalar == 0) randScalar = 1;
+    
+    // 假设 G1Point(1, 2) 是生成元
+    G1Point memory H1 = g1mul(G1Point(1, 2), randScalar);
+
+    // ==========================================
+    // 3. 计算对偶码字 cPerp
+    // ==========================================
+    uint256[] memory cPerp = new uint256[](n);
+
+    for (uint256 i = 0; i < n; i++) {
+        uint256 x_i = i + 1;
+        uint256 denom = 1;
+        
+        for (uint256 j = 0; j < n; j++) {
+            if (i == j) continue;
+            uint256 x_j = j + 1;
+            
+            uint256 diff;
+            if (x_i > x_j) {
+                diff = x_i - x_j;
+            } else {
+                diff = x_i + CURVE_ORDER - x_j;
+            }
+            denom = mulmod(denom, diff, CURVE_ORDER);
+        }
+
+        uint256 v_i = inv(denom,CURVE_ORDER);
+        uint256 fVal = evaluatePolynomial(fCoeffs, x_i, CURVE_ORDER);
+        cPerp[i] = mulmod(v_i, fVal, CURVE_ORDER);
+    }
+
+    // ==========================================
+    // 4. 验证 sum == H1
+    // ==========================================
+    G1Point memory sum = H1;
+
+    for (uint256 i = 0; i < n; i++) {
+        // 优化：如果系数为 0，跳过乘法
+        if (cPerp[i] == 0) continue;
+        G1Point memory term = g1mul(shares[i], cPerp[i]);
+        sum = g1add(sum, term);
+    }
+
+    return (sum.X == H1.X && sum.Y == H1.Y);
+}
+
+/**
+ * @dev 拉格朗日插值恢复秘密点
+ */
+function interpolateG1(G1Point[] memory points) internal view returns (G1Point memory secret) {
+    uint k = points.length;
+    require(k > 0, "no points provided");
+
+    secret = G1Point(0, 0);
+
+    for (uint i = 0; i < k; i++) {
+        uint x_i = i + 1;
+        uint num = 1;
+        uint den = 1;
+
+        for (uint j = 0; j < k; j++) {
+            if (i == j) continue;
+            uint x_j = j + 1;
+
+            num = mulmod(num, CURVE_ORDER - x_j, CURVE_ORDER);
+
+            uint diff;
+            if (x_i > x_j) {
+                diff = x_i - x_j;
+            } else {
+                diff = x_i + CURVE_ORDER - x_j;
+            }
+            den = mulmod(den, diff, CURVE_ORDER);
+        }
+
+        uint denInv = inv(den,CURVE_ORDER);
+        uint coeff = mulmod(num, denInv, CURVE_ORDER);
+
+        G1Point memory term = g1mul(points[i], coeff);
+        secret = g1add(secret, term);
+    }
+
+    return secret;
+}
+
+/**
+ * @dev 多项式求值
+ */
+function evaluatePolynomial(uint256[] memory coefficients, uint256 x, uint256 order) 
+    internal pure returns (uint256 result) 
+{
+    result = coefficients[0];
+    uint256 xPower = x;
+
+    for (uint256 i = 1; i < coefficients.length; i++) {
+        uint256 term = mulmod(coefficients[i], xPower, order);
+        result = addmod(result, term, order);
+        xPower = mulmod(xPower, x, order);
+    }
+    return result;
+}
+
 
 //=========================================DT===========================================//
     struct MPK {
