@@ -1,5 +1,6 @@
-# infura-sepolia
-go连接以太网测试网上部署的智能合约
+
+
+
 # Pre-requisites
 
 * `Golang`  https://go.dev/dl/   
@@ -9,48 +10,49 @@ go连接以太网测试网上部署的智能合约
 * `Solidity compiler (solc)`  https://docs.soliditylang.org/en/latest/installing-solidity.html  
 Version: 0.8.25-develop
 
-* `infura` https://www.infura.io/ get API key-->choose endpoint(sepolia)-->copy link
+* `Ganache-cli`  https://www.npmjs.com/package/ganache-cli
     
 * `Abigen`    Version: v1.14.3
     ```bash
     go get -u github.com/ethereum/go-ethereum
     go install github.com/ethereum/go-ethereum/cmd/abigen@v1.14.3
     ```
+
+
 # File description
 
-* `main.go`   run this file to interact with contract.
+* `main.go`   run this file to test the functionalities of the framework.
 
-* `deploy/main.go`  run this file to deploy contract.
+* `compile/contract/`  The folder stores contract source code file (.sol) and generated go contract file.
 
-* `contract/`  The folder stores contract source code file (.sol) 
+* `compile/compile.sh`  The script file compiles solidity and generates go contract file.
 
-* `build/` The folder stores the abi file and bin file
-
-* `contract/compile.sh`  The script file compiles solidity and generates go contract file.
-
-* `gen/`  The folder stores generated go file which is imported in main.go
-
-* `wallet` The folder stores two encrypted accounts 
+* `genPrvKey.sh`  The script file generates accounts and stores in the`.env` file.
+#########
 
 # How to run
 
-1. Generate the abi, bin file and go file
+1. Generate private keys to generate the `.env` file in different Linux os or Mac os
+
+    ```bash(Linux os)
+    bash genPrvKey_Linux.sh
+    ```
+
+    ```bash(Mac os)
+    bash genPrvKey_Mac.sh
+    ```
+
+2. start ganache
 
     ```bash
-    cd contract
+    ganache --mnemonic "Trade" -l 90071992547 -e 1000
+    ```
+
+3. Compile the smart contract code
+
+    ```bash
     bash compile.sh
     ```
-
-2. Run the deploy/main.go
-
-    ```bash
-    cd deploy
-    go run main.go
-    ```
-
-3. Edit main.go
-
-    Replace the original address with your own contract address
 
 4. Run the main.go
     ```bash

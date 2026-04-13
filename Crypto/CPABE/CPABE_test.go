@@ -1,16 +1,17 @@
 package CPABE
 
 import (
+	"crypto/rand"
 	"fmt"
 	"math/big"
 	"strconv"
 	"testing"
 	"time"
 
-	"github.com/WXY1313/Trade/Crypto/CPABE/node"
-	"github.com/WXY1313/Trade/Crypto/Operation"
+	"Trade/Crypto/CPABE/node"
+	"Trade/Crypto/Operation"
 
-	"github.com/fentec-project/bn256"
+	bn256 "github.com/ethereum/go-ethereum/crypto/bn256/cloudflare"
 	"github.com/fentec-project/gofe/sample"
 	"github.com/stretchr/testify/require"
 )
@@ -22,7 +23,7 @@ func TestAll(t *testing.T) {
 	sampler := sample.NewUniformRange(big.NewInt(1), MPK.Order)
 
 	//Test group operation
-	r, _ := sampler.Sample()
+	r, _ := rand.Int(rand.Reader, bn256.Order)
 	var rG1 *bn256.G1
 	var rG2 *bn256.G2
 	var rGT *bn256.GT
@@ -44,7 +45,7 @@ func TestAll(t *testing.T) {
 
 	starttime = time.Now().UnixMicro()
 	for k := 0; k < int(n); k++ {
-		rGT = new(bn256.GT).ScalarBaseMult(r)
+		rGT = new(bn256.GT).ScalarMult(bn256.Pair(MPK.G1, MPK.G2), r)
 	}
 	endtime = time.Now().UnixMicro()
 	fmt.Printf("Exp in GT Time Used is %.2f ms\n", (float64(endtime-starttime)/n)/float64(1000))

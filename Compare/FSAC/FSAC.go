@@ -7,13 +7,13 @@ import (
 	"math/big"
 	"strconv"
 
-	gss "github.com/WXY1313/Trade/Compare/FSAC/GSS"
-	"github.com/WXY1313/Trade/Crypto/CPABE/lsss"
-	"github.com/WXY1313/Trade/Crypto/CPABE/node"
-	"github.com/WXY1313/Trade/Crypto/CPABE/opmatrix"
-	"github.com/WXY1313/Trade/Crypto/SymEnc"
+	gss "Trade/Compare/FSAC/GSS"
+	"Trade/Crypto/CPABE/lsss"
+	"Trade/Crypto/CPABE/node"
+	"Trade/Crypto/CPABE/opmatrix"
+	"Trade/Crypto/SymEnc"
 
-	"github.com/fentec-project/bn256"
+	bn256 "github.com/ethereum/go-ethereum/crypto/bn256/cloudflare"
 	"github.com/fentec-project/gofe/sample"
 )
 
@@ -91,7 +91,8 @@ func Setup() (*MPK, *bn256.G1, error) {
 	hG1 := new(bn256.G1).ScalarBaseMult(a)
 	hG2 := new(bn256.G2).ScalarBaseMult(a)
 	FSACMSK := new(bn256.G1).ScalarBaseMult(alpha)
-	alphaGT := new(bn256.GT).ScalarBaseMult(alpha)
+	GT := bn256.Pair(new(bn256.G1).ScalarBaseMult(big.NewInt(1)), new(bn256.G2).ScalarBaseMult(big.NewInt(1)))
+	alphaGT := new(bn256.GT).ScalarMult(GT, alpha)
 	//For each x in U: h1x=h1^{rx}, h2x=h2^{rx}
 	hxsG1 := make(map[string]*bn256.G1)
 	hxsG2 := make(map[string]*bn256.G2)
@@ -142,7 +143,8 @@ func SanKeyGen(MPK *MPK) (*Key, error) {
 	//t←Zp,L=g^t
 	sampler := sample.NewUniformRange(big.NewInt(1), MPK.Order)
 	sk, _ := sampler.Sample()
-	pk := new(bn256.GT).ScalarBaseMult(sk)
+	GT := bn256.Pair(new(bn256.G1).ScalarBaseMult(big.NewInt(1)), new(bn256.G2).ScalarBaseMult(big.NewInt(1)))
+	pk := new(bn256.GT).ScalarMult(GT, sk)
 	return &Key{SK: sk, PK: pk}, nil
 }
 
@@ -321,12 +323,13 @@ func FindReconstructionCoefficients(AA *node.Node, attributes []string) (map[str
 }
 
 func Santize(MPK *MPK, Key *Key, CT *FSACCiphertext, ct []byte) ([]byte, *VKey, error) {
+	GT := bn256.Pair(new(bn256.G1).ScalarBaseMult(big.NewInt(1)), new(bn256.G2).ScalarBaseMult(big.NewInt(1)))
 	sampler := sample.NewUniformRange(big.NewInt(1), MPK.Order)
 	_k, _ := sampler.Sample()
-	_K := new(bn256.GT).ScalarBaseMult(_k)
+	_K := new(bn256.GT).ScalarMult(GT, _k)
 	sanCT := SymEnc.XOREncryptDecrypt(ct, SymEnc.KDF(_K))
 	b, _ := sampler.Sample()
-	v0 := new(bn256.GT).ScalarBaseMult(b)
+	v0 := new(bn256.GT).ScalarMult(GT, b)
 	v1 := new(bn256.GT).Add(_K, new(bn256.GT).ScalarMult(Key.PK, b))
 	return sanCT, &VKey{V0: v0, V1: v1}, nil
 }

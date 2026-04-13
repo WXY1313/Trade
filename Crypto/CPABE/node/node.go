@@ -1,7 +1,10 @@
 package node
 
 import (
+	"Trade/compile/contract"
 	"math/big"
+
+	"github.com/ethereum/go-ethereum/crypto"
 )
 
 type Node struct {
@@ -184,4 +187,96 @@ func ExtractFirstThreshold(root *Node) (*Node, []*Node, int, int) {
 		T:           t,
 		Idx:         root.Idx,
 	}, children, t, n
+}
+
+// ConvertTreeToInputs 将链下 *Node 树转换为 []NodeInput
+// 返回值建议加上 error 处理，防止意外
+func ConvertTreeToInputs(n *Node) []contract.TradeNodeInput {
+	var inputs []contract.TradeNodeInput
+
+	// 1. 生成当前节点的 ChildrenIds
+	// 注意：Abigen 生成的 uint256[] 类型通常对应 []*big.Int
+	childrenIds := make([]*big.Int, len(n.Children))
+	for i, child := range n.Children {
+		// 确保子节点的 Idx 不为 nil
+		if child.Idx == nil {
+			return nil
+		}
+		childrenIds[i] = child.Idx
+	}
+
+	// 2. 生成属性 bytes32
+	// 【关键修正】必须使用 Keccak256 以匹配 Solidity 的 keccak256 或 stringToBytes32
+	var attr [32]byte
+	if n.Attribute != "" {
+		hash := crypto.Keccak256Hash([]byte(n.Attribute))
+		copy(attr[:], hash[:])
+	} else {
+		// 空属性通常用 0 填充，或者全 0 的 bytes32
+		attr = [32]byte{}
+	}
+
+	// 3. 构造 NodeInput
+	// 注意：字段名必须与 Solidity struct 完全一致
+	inputNode := contract.TradeNodeInput{
+		Id:          n.Idx, // 节点唯一 ID
+		IsLeaf:      n.IsLeaf,
+		Childrennum: big.NewInt(int64(len(n.Children))), // 显式转换 int -> int64 -> *big.Int
+		T:           big.NewInt(int64(n.T)),
+		Idx:         n.Idx,
+		Attribute:   attr,
+		ChildrenIds: childrenIds,
+	}
+
+	inputs = append(inputs, inputNode)
+
+	// 4. 递归处理所有子节点
+	for _, child := range n.Children {
+		childInputs := ConvertTreeToInputs(child)
+		inputs = append(inputs, childInputs...)
+	}
+	return inputs
+}
+
+func ConvertNodesToNodeInputs(nodes []*Node) []contract.TradeNodeInput {
+	inputs := make([]contract.TradeNodeInput, len(nodes))
+
+	for i, n := range nodes {
+		if n == nil {
+			return nil
+		}
+
+		// 1. 处理 Attribute (string -> bytes32)
+		// 链上通常使用 keccak256 哈希字符串来生成 bytes32
+		var attr [32]byte
+		if n.Attribute != "" {
+			hash := crypto.Keccak256Hash([]byte(n.Attribute))
+			copy(attr[:], hash[:])
+		}
+		// 如果 Attribute 为空，attr 默认为全 0，符合预期
+
+		// 2. 处理 ChildrenIds ([]*big.Int)
+		// 提取子节点的 Idx 作为 ID 列表
+		childrenIds := make([]*big.Int, len(n.Children))
+		for j, child := range n.Children {
+			if child.Idx == nil {
+				return nil
+			}
+			childrenIds[j] = child.Idx
+		}
+
+		// 3. 构造 NodeInput 结构体
+		// 注意：字段名必须与 abigen 生成的 TradeNodeInput 一致
+		inputs[i] = contract.TradeNodeInput{
+			Id:          n.Idx,                              // 节点唯一 ID
+			IsLeaf:      n.IsLeaf,                           // 是否叶子节点
+			Childrennum: big.NewInt(int64(len(n.Children))), // 子节点数量 (转为 *big.Int)
+			T:           big.NewInt(int64(n.T)),             // 阈值 T (转为 *big.Int)
+			Idx:         n.Idx,                              // 索引 Idx
+			Attribute:   attr,                               // 属性哈希 bytes32
+			ChildrenIds: childrenIds,                        // 子节点 ID 数组
+		}
+	}
+
+	return inputs
 }

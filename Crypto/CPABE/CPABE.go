@@ -5,12 +5,12 @@ import (
 	"math/big"
 	"strconv"
 
-	"github.com/WXY1313/Trade/Crypto/CPABE/lsss"
-	"github.com/WXY1313/Trade/Crypto/CPABE/node"
-	"github.com/WXY1313/Trade/Crypto/Operation"
-	"github.com/WXY1313/Trade/Crypto/RScode"
+	"Trade/Crypto/CPABE/lsss"
+	"Trade/Crypto/CPABE/node"
+	"Trade/Crypto/Operation"
+	"Trade/Crypto/RScode"
 
-	"github.com/fentec-project/bn256"
+	bn256 "github.com/ethereum/go-ethereum/crypto/bn256/cloudflare"
 	"github.com/fentec-project/gofe/data"
 	"github.com/fentec-project/gofe/sample"
 )
@@ -172,7 +172,9 @@ func CipherCheck(policy *node.Node, path *node.Node, mpk *MPK, ct *ABECiphertext
 	for _, at := range attrSet {
 		Q[at] = ct.C3[at]
 	}
-	recoverResult, _ := lsss.ReconG1(policy, Q)
+	//recoverResult, _ := lsss.ReconG1(policy, Q)
+	w, rowMap, _ := lsss.Convert(policy, Q)
+	recoverResult, _ := lsss.ReconG1(w, rowMap, Q)
 	if !Operation.G1Equal(mpk.H1, recoverResult) {
 		return false
 	}

@@ -11,11 +11,12 @@ import (
 
 	"testing"
 
-	"github.com/WXY1313/Trade/Crypto/CPABE/node"
-	"github.com/WXY1313/Trade/Crypto/Operation"
-	"github.com/WXY1313/Trade/Crypto/SymEnc"
+	"Trade/Crypto/CPABE/lsss"
+	"Trade/Crypto/CPABE/node"
+	"Trade/Crypto/Operation"
+	"Trade/Crypto/SymEnc"
 
-	"github.com/fentec-project/bn256"
+	bn256 "github.com/ethereum/go-ethereum/crypto/bn256/cloudflare"
 	// "github.com/stretchr/testify/assert"
 )
 
@@ -29,7 +30,7 @@ func min(a, b int) int {
 // Performance test
 func TestDT(t *testing.T) {
 
-	n := float64(500)
+	n := float64(1)
 
 	//Setup Phase
 	MPK, MSK, SPK, SSK := Setup()
@@ -57,40 +58,54 @@ func TestDT(t *testing.T) {
 	// Hide the trading message Message as the ciphertext ct using a symmetric key SymKey
 	ct := SymEnc.XOREncryptDecrypt([]byte(Message), SymEnc.KDF(SymKey))
 
-	//Construct the buying policy
-	//Access Policy
-	nx := 1
+	//ABE Access Policy
+	nx := 3
 	tx := (nx + 1) / 2
-	root := node.NewNode(false, 3, 2, big.NewInt(int64(0)), "")
+	abeRoot := node.NewNode(false, 3, 2, big.NewInt(int64(0)), "")
 	P_A := node.NewNode(true, 0, 1, big.NewInt(int64(1)), "Attr1")
 	P_B := node.NewNode(true, 0, 1, big.NewInt(int64(2)), "Attr2")
 	P_1 := node.NewNode(false, nx, tx, big.NewInt(int64(3)), "")
-	root.Children = []*node.Node{P_A, P_B, P_1}
+	abeRoot.Children = []*node.Node{P_A, P_B, P_1}
 	for i := 0; i < nx; i++ {
-		P_1.Children = append(P_1.Children, node.NewNode(true, 0, 1, big.NewInt(int64(i+1)), "Attr"+strconv.Itoa(i+3)))
+		P_1.Children = append(P_1.Children, node.NewNode(true, 0, 1, big.NewInt(int64(i+4)), "Attr"+strconv.Itoa(i+3)))
 	}
-	matrix, _ := node.Convert(root)
-
-	//Authorized path
-	path := node.NewNode(false, 2, 2, big.NewInt(int64(0)), "")
-	Path_A := node.NewNode(true, 0, 1, big.NewInt(int64(1)), "Attr1")
-	Path_1 := node.NewNode(false, tx, tx, big.NewInt(int64(3)), "")
-	Path_1.Children = P_1.Children[:tx]
-	path.Children = []*node.Node{Path_A, Path_1}
+	matrix, _ := node.Convert(abeRoot)
 
 	//Generate and Check Ciphertext
 	var CT *DTCiphertext
 	starttime := time.Now().UnixMicro()
 	for k := 0; k < int(n); k++ {
-		CT = Encrypt(MPK, SPK, root, s, pko)
+		CT = Encrypt(MPK, SPK, abeRoot, s, pko)
 	}
 	endtime := time.Now().UnixMicro()
 	fmt.Printf("Encrypt Algorithm Time Used is %.2f ms\n", (float64(endtime-starttime)/n)/float64(1000))
+	fmt.Printf("DTPolicy=%v\n", CT.Policy)
+
+	tradeQ := make(map[string]*bn256.G1)
+	tradeQ["buy"] = CT.C1.Com
+	tradeQ["per"] = CT.C2Com
+	tradeW, tradeRowMap, _ := lsss.Convert(CT.Policy, tradeQ)
+	fmt.Printf("tradeW=%v\n", tradeW)
+	fmt.Printf("tradeRowMap=%v\n", tradeRowMap)
+
+	//ABE Authorized path
+	abePath := node.NewNode(false, 2, 2, big.NewInt(int64(0)), "")
+	Path_A := node.NewNode(true, 0, 1, big.NewInt(int64(1)), "Attr1")
+	Path_1 := node.NewNode(false, tx, tx, big.NewInt(int64(3)), "")
+	Path_1.Children = P_1.Children[:tx]
+	abePath.Children = []*node.Node{Path_A, Path_1}
+	//Authorized path of trade policy
+	tradePath := node.NewNode(false, 2, 2, big.NewInt(int64(0)), "")
+	P_buyer := node.NewNode(true, 0, 1, big.NewInt(int64(1)), "buy")
+	P_pay := node.NewNode(false, 1, 1, big.NewInt(int64(2)), "")
+	tradePath.Children = []*node.Node{P_buyer, P_pay}
+	P_per := node.NewNode(true, 0, 1, big.NewInt(int64(3)), "per")
+	P_pay.Children = []*node.Node{P_per}
 
 	var cipherVer bool
 	starttime = time.Now().UnixMicro()
 	for k := 0; k < int(n); k++ {
-		cipherVer = EncVer(MPK, SPK, CT, vko, path)
+		cipherVer = EncVer(MPK, SPK, CT, vko, abePath, tradeW, tradeRowMap, tradeQ)
 	}
 	endtime = time.Now().UnixMicro()
 	fmt.Printf("EncVer Algorithm Time Used is %.2f ms\n", (float64(endtime-starttime)/n)/float64(1000))
@@ -107,7 +122,7 @@ func TestDT(t *testing.T) {
 	var recoverSymKey *bn256.GT
 	starttime = time.Now().UnixMicro()
 	for k := 0; k < int(n); k++ {
-		recoverSymKey = PerDecrypt(path, MPK, CT, RK, sku, AK)
+		recoverSymKey = PerDecrypt(abePath, MPK, CT, RK, sku, AK)
 	}
 	endtime = time.Now().UnixMicro()
 	fmt.Printf("Pay-per Decrypt Algorithm Time Used is %.2f ms\n", (float64(endtime-starttime)/n)/float64(1000))
@@ -129,7 +144,7 @@ func TestDT(t *testing.T) {
 	//Decrypt CT using subscription buyer's RK and attribute key AK
 	starttime = time.Now().UnixMicro()
 	for k := 0; k < int(n); k++ {
-		recoverSymKey = SubDecrypt(path, MPK, SPK, CT, matrix, SK, sku, AK)
+		recoverSymKey = SubDecrypt(abePath, MPK, SPK, CT, matrix, SK, sku, AK)
 	}
 	endtime = time.Now().UnixMicro()
 	fmt.Printf("Subscribe Decrypt Algorithm Time Used is %.2f ms\n", (float64(endtime-starttime)/n)/float64(1000))

@@ -8,14 +8,14 @@ import (
 	"fmt"
 	"math/big"
 
-	"github.com/WXY1313/Trade/Crypto/CPABE"
-	"github.com/WXY1313/Trade/Crypto/CPABE/lsss"
-	"github.com/WXY1313/Trade/Crypto/CPABE/node"
-	"github.com/WXY1313/Trade/Crypto/Operation"
-	"github.com/WXY1313/Trade/Crypto/RScode"
-	Sub "github.com/WXY1313/Trade/Crypto/Subscribe"
+	"Trade/Crypto/CPABE"
+	"Trade/Crypto/CPABE/lsss"
+	"Trade/Crypto/CPABE/node"
+	"Trade/Crypto/Operation"
+	"Trade/Crypto/RScode"
+	Sub "Trade/Crypto/Subscribe"
 
-	"github.com/fentec-project/bn256"
+	bn256 "github.com/ethereum/go-ethereum/crypto/bn256/cloudflare"
 	// "github.com/stretchr/testify/assert"
 )
 
@@ -54,27 +54,26 @@ func AKGen(MPK *CPABE.MPK, MSK *CPABE.MSK, su []string) *CPABE.SK {
 	return AK
 }
 
-func Encrypt(MPK *CPABE.MPK, SPK *Sub.SPK, policy *node.Node, s *big.Int, pko *bn256.G1) *DTCiphertext {
-	//1.Construct the Trade policy:\tau_{trade}=2-of-(1-of-(P_seller,P_sub),P_buyer))
-	root := node.NewNode(false, 2, 2, big.NewInt(int64(0)), "")
+func Encrypt(MPK *CPABE.MPK, SPK *Sub.SPK, abePolicy *node.Node, s *big.Int, pko *bn256.G1) *DTCiphertext {
+	Root := node.NewNode(false, 2, 2, big.NewInt(int64(0)), "")
 	P_buyer := node.NewNode(true, 0, 1, big.NewInt(int64(1)), "buy")
 	P_pay := node.NewNode(false, 2, 1, big.NewInt(int64(2)), "")
-	root.Children = []*node.Node{P_buyer, P_pay}
-	P_per := node.NewNode(true, 0, 1, big.NewInt(int64(1)), "per")
-	P_sub := node.NewNode(true, 0, 1, big.NewInt(int64(2)), "sub")
+	Root.Children = []*node.Node{P_buyer, P_pay}
+	P_per := node.NewNode(true, 0, 1, big.NewInt(int64(3)), "per")
+	P_sub := node.NewNode(true, 0, 1, big.NewInt(int64(4)), "sub")
 	P_pay.Children = []*node.Node{P_per, P_sub}
 
 	com := new(bn256.G1).ScalarMult(MPK.G1, s)
-	shares, _ := lsss.Share(s, root)
+	shares, _ := lsss.Share(s, Root)
 	//Generate P_buyer ciphertext C1
-	ABECT, _ := CPABE.Encrypt(MPK, shares["buy"], policy)
+	ABECT, _ := CPABE.Encrypt(MPK, shares["buy"], abePolicy)
 	//Generate P_per ciphertext C2
 	c2Com := new(bn256.G1).ScalarMult(MPK.G1, shares["per"])
 	c2 := new(bn256.G1).ScalarMult(pko, shares["per"])
 	//Generate P_sub ciphertext C3
 	SubCT, _ := Sub.Encrypt(SPK, shares["sub"])
 
-	return &DTCiphertext{Policy: root,
+	return &DTCiphertext{Policy: Root,
 		Com:   com,
 		C1:    ABECT,
 		C2:    c2,
@@ -82,7 +81,7 @@ func Encrypt(MPK *CPABE.MPK, SPK *Sub.SPK, policy *node.Node, s *big.Int, pko *b
 		C3:    SubCT}
 }
 
-func EncVer(MPK *CPABE.MPK, SPK *Sub.SPK, CT *DTCiphertext, vko *bn256.G2, pathABE *node.Node) bool {
+func EncVer(MPK *CPABE.MPK, SPK *Sub.SPK, CT *DTCiphertext, vko *bn256.G2, pathABE *node.Node, w [][]*big.Int, rowMap []*node.Node, Q map[string]*bn256.G1) bool {
 	if !CPABE.CipherCheck(CT.C1.Policy, pathABE, MPK, CT.C1) {
 		fmt.Printf("CPABE CT is false!\n")
 		return false
@@ -98,29 +97,17 @@ func EncVer(MPK *CPABE.MPK, SPK *Sub.SPK, CT *DTCiphertext, vko *bn256.G2, pathA
 
 	var shareCom []*bn256.G1
 	shareCom = append(shareCom, CT.C1.Com, CT.C2Com, CT.C3.Com)
-	fmt.Printf("")
 	verRS, _ := RScode.RecurRSCode(CT.Policy, shareCom)
 	if !verRS {
 		fmt.Printf("RScode is false!\n")
 		return false
 	}
 
-	path := node.NewNode(false, 2, 2, big.NewInt(int64(0)), "")
-	P_buyer := node.NewNode(true, 0, 1, big.NewInt(int64(1)), "buy")
-	P_pay := node.NewNode(false, 1, 1, big.NewInt(int64(2)), "")
-	path.Children = []*node.Node{P_buyer, P_pay}
-	P_per := node.NewNode(true, 0, 1, big.NewInt(int64(1)), "per")
-	P_pay.Children = []*node.Node{P_per}
-
-	Q := make(map[string]*bn256.G1)
-	Q["buy"] = shareCom[0]
-	Q["per"] = shareCom[1]
-	recoverCom, _ := lsss.ReconG1(path, Q)
+	recoverCom, _ := lsss.ReconG1(w, rowMap, Q)
 	if !Operation.G1Equal(recoverCom, CT.Com) {
 		fmt.Printf("Recover is false!\n")
 		return false
 	}
-
 	return true
 }
 
@@ -152,7 +139,7 @@ func PerDecrypt(path *node.Node, MPK *CPABE.MPK, CT *DTCiphertext, rekey *ReKey,
 	P_buyer := node.NewNode(true, 0, 1, big.NewInt(int64(1)), "buy")
 	P_pay := node.NewNode(false, 1, 1, big.NewInt(int64(2)), "")
 	DTpath.Children = []*node.Node{P_buyer, P_pay}
-	P_per := node.NewNode(true, 0, 1, big.NewInt(int64(1)), "per")
+	P_per := node.NewNode(true, 0, 1, big.NewInt(int64(3)), "per")
 	P_pay.Children = []*node.Node{P_per}
 	S, _ := lsss.ReconGT(DTpath, decShare)
 

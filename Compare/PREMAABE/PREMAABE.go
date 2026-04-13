@@ -7,11 +7,11 @@ import (
 	"math/big"
 	"strings"
 
-	"github.com/WXY1313/Trade/Crypto/CPABE/lsss"
-	"github.com/WXY1313/Trade/Crypto/CPABE/node"
-	"github.com/WXY1313/Trade/Crypto/CPABE/opmatrix"
+	"Trade/Crypto/CPABE/lsss"
+	"Trade/Crypto/CPABE/node"
+	"Trade/Crypto/CPABE/opmatrix"
 
-	"github.com/fentec-project/bn256"
+	bn256 "github.com/ethereum/go-ethereum/crypto/bn256/cloudflare"
 	"github.com/fentec-project/gofe/data"
 	"github.com/fentec-project/gofe/sample"
 	"golang.org/x/crypto/sha3"
@@ -176,10 +176,9 @@ func ReKeyGen(gid string, akSet []*AttrKey) (*bn256.GT, *ReKey, error) {
 	var rk3 []*bn256.G2
 	var rk4 []*bn256.G2
 
-	_, X, err := bn256.RandomGT(rand.Reader)
-	if err != nil {
-		return nil, nil, err
-	}
+	x, _ := rand.Int(rand.Reader, bn256.Order)
+	GT := bn256.Pair(new(bn256.G1).ScalarBaseMult(big.NewInt(1)), new(bn256.G2).ScalarBaseMult(big.NewInt(1)))
+	X := new(bn256.GT).ScalarMult(GT, x)
 	rk1 := HashGTToBigInt(X)
 	z, rk2, err := bn256.RandomG1(rand.Reader)
 	if err != nil {

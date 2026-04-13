@@ -8,14 +8,15 @@ import (
 
 	"testing"
 
-	"github.com/WXY1313/Trade/Crypto/CPABE/node"
-	"github.com/WXY1313/Trade/Crypto/Operation"
+	"Trade/Crypto/CPABE/node"
+	"Trade/Crypto/Operation"
 
-	"github.com/fentec-project/bn256"
+	bn256 "github.com/ethereum/go-ethereum/crypto/bn256/cloudflare"
 	// "pvgss/crypto/gss"
 )
 
 func TestGSS(t *testing.T) {
+	GT := bn256.Pair(new(bn256.G1).ScalarBaseMult(big.NewInt(1)), new(bn256.G2).ScalarBaseMult(big.NewInt(1)))
 	//Access Policy
 	root := node.NewNode(false, 3, 3, big.NewInt(int64(0)), "")
 	P_1 := node.NewNode(false, 3, 2, big.NewInt(int64(1)), "")
@@ -59,14 +60,14 @@ func TestGSS(t *testing.T) {
 	attrSet := node.RowToAttrib(path)
 	Q := make(map[string]*bn256.GT)
 	for _, at := range attrSet {
-		Q[at] = new(bn256.GT).ScalarBaseMult(shares[at])
+		Q[at] = new(bn256.GT).ScalarMult(GT, shares[at])
 	}
 
 	recoveredSecret, _ := GssReconGT(path, Q)
 	fmt.Println("orignal secret = ", secret)
 	fmt.Println("recover secret = ", recoveredSecret)
 	// Verify that the recovered secret is the same as the original secret
-	if !Operation.GTEqual(new(bn256.GT).ScalarBaseMult(secret), recoveredSecret) {
+	if !Operation.GTEqual(new(bn256.GT).ScalarMult(GT, secret), recoveredSecret) {
 		t.Errorf("Secret reconstruction mismatch: expected %v, got %v", secret, recoveredSecret)
 	}
 }

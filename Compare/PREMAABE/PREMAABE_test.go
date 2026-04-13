@@ -8,17 +8,19 @@ import (
 	"testing"
 	"time"
 
-	"github.com/WXY1313/Trade/Crypto/CPABE/node"
-	"github.com/WXY1313/Trade/Crypto/SymEnc"
+	"Trade/Crypto/CPABE/node"
+	"Trade/Crypto/SymEnc"
 
-	"github.com/fentec-project/bn256"
+	bn256 "github.com/ethereum/go-ethereum/crypto/bn256/cloudflare"
 	"github.com/stretchr/testify/assert"
 )
 
 func TestPREMAABE(t *testing.T) {
 	n := float64(1)
 	// create new MAABE struct with Global Parameters
-	_, gt, _ := bn256.RandomGT(rand.Reader)
+	x, _ := rand.Int(rand.Reader, bn256.Order)
+	GT := bn256.Pair(new(bn256.G1).ScalarBaseMult(big.NewInt(1)), new(bn256.G2).ScalarBaseMult(big.NewInt(1)))
+	gt := new(bn256.GT).ScalarMult(GT, x)
 	SymEnc.KDF(gt)
 	maabe := NewPREMAABE()
 	pp := maabe.GlobalSetup()
@@ -69,7 +71,8 @@ func TestPREMAABE(t *testing.T) {
 	// msg is encrypted with AES-CBC with a random key that is encrypted with
 	// MA-ABE
 	// generate secret key
-	_, symKey, err := bn256.RandomGT(rand.Reader)
+	key, _ := rand.Int(rand.Reader, bn256.Order)
+	symKey := new(bn256.GT).ScalarMult(GT, key)
 	//fmt.Println(symKey)
 	ciphertext := SymEnc.XOREncryptDecrypt([]byte(msg), SymEnc.KDF(symKey))
 

@@ -4,9 +4,9 @@ import (
 	"bytes"
 	"math/big"
 
-	"github.com/WXY1313/Trade/Crypto/CPABE"
+	"Trade/Crypto/CPABE"
 
-	"github.com/fentec-project/bn256"
+	bn256 "github.com/ethereum/go-ethereum/crypto/bn256/cloudflare"
 	"github.com/fentec-project/gofe/sample"
 )
 

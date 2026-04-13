@@ -7,9 +7,9 @@ import (
 	"fmt"
 	"math/big"
 
-	"github.com/WXY1313/Trade/Crypto/CPABE/node"
+	"Trade/Crypto/CPABE/node"
 
-	"github.com/fentec-project/bn256"
+	bn256 "github.com/ethereum/go-ethereum/crypto/bn256/cloudflare"
 )
 
 func sssShare(secret *big.Int, n, t int) ([]*big.Int, error) {
@@ -39,6 +39,7 @@ func sssShare(secret *big.Int, n, t int) ([]*big.Int, error) {
 }
 
 func sssReconGT(shares []*bn256.GT, indices []int, t int) (*bn256.GT, error) {
+	GT := bn256.Pair(new(bn256.G1).ScalarBaseMult(big.NewInt(1)), new(bn256.G2).ScalarBaseMult(big.NewInt(1)))
 	if len(shares) < t {
 		return nil, fmt.Errorf("not enough shares")
 	}
@@ -47,7 +48,7 @@ func sssReconGT(shares []*bn256.GT, indices []int, t int) (*bn256.GT, error) {
 	indices = indices[:t]
 
 	// 初始化为 GT 单位元（很关键！）
-	result := new(bn256.GT).ScalarBaseMult(big.NewInt(0)) // g^0 = 1
+	result := new(bn256.GT).ScalarMult(GT, big.NewInt(0)) // g^0 = 1
 
 	for i := 0; i < t; i++ {
 		xi := big.NewInt(int64(indices[i]))

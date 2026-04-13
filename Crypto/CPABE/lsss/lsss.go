@@ -5,10 +5,10 @@ import (
 	"fmt"
 	"math/big"
 
-	"github.com/WXY1313/Trade/Crypto/CPABE/node"
-	"github.com/WXY1313/Trade/Crypto/CPABE/opmatrix"
+	"Trade/Crypto/CPABE/node"
+	"Trade/Crypto/CPABE/opmatrix"
 
-	"github.com/fentec-project/bn256"
+	bn256 "github.com/ethereum/go-ethereum/crypto/bn256/cloudflare"
 )
 
 // Share 计算 LSSS 份额并返回 属性 -> 份额 的映射
@@ -150,6 +150,7 @@ func Recon(AA *node.Node, shares map[string]*big.Int) (*big.Int, error) {
 	return s, nil
 }
 
+/*
 func ReconG1(AA *node.Node, shares map[string]*bn256.G1) (*bn256.G1, error) {
 	// 1. 获取矩阵和行对应的节点映射
 	// 这里直接调用你刚才修改后的 Convert 函数
@@ -225,6 +226,109 @@ func ReconG1(AA *node.Node, shares map[string]*bn256.G1) (*bn256.G1, error) {
 	}
 
 	// 计算最终结果 s = w * shares
+	reconS, err := opmatrix.MultiplyMatrixG1(w, shares2)
+	if err != nil {
+		return nil, fmt.Errorf("Matrix multiplication (result) failed: %v", err)
+	}
+
+	s := reconS[0][0]
+	return s, nil
+}
+*/
+// Convert 负责将访问树转换为矩阵，并计算出重构所需的系数向量 w
+// 修正点：rowMap 改回 []*node.Node
+func Convert(AA *node.Node, shares map[string]*bn256.G1) (w [][]*big.Int, rowMap []*node.Node, err error) {
+	// 1. 获取矩阵和行对应的节点映射
+	// 假设 node.Convert 返回的是 []*node.Node
+	matrix, rowMap := node.Convert(AA)
+
+	// 2. 动态构建索引列表 I
+	var I []int
+	// 修正点：使用下标遍历，确保能正确访问切片中的元素
+	for i := 0; i < len(rowMap); i++ {
+		nodeItem := rowMap[i]
+		if nodeItem.IsLeaf {
+			if _, ok := shares[nodeItem.Attribute]; ok {
+				I = append(I, i)
+			}
+		}
+	}
+
+	if len(I) == 0 {
+		return nil, nil, fmt.Errorf("no valid shares found to satisfy the policy")
+	}
+
+	rows := len(I)
+
+	// 3. 构建用于求逆的子矩阵
+	recMatrix := make([][]*big.Int, rows)
+	for i := 0; i < rows; i++ {
+		idx := I[i]
+		// 边界检查
+		if idx >= len(matrix) {
+			return nil, nil, fmt.Errorf("Index %d out of range (matrix has %d rows)", idx, len(matrix))
+		}
+		if len(matrix[idx]) < rows {
+			return nil, nil, fmt.Errorf("Matrix row %d has insufficient columns (%d < %d)", idx, len(matrix[idx]), rows)
+		}
+		recMatrix[i] = matrix[idx][:rows]
+	}
+
+	// 4. 计算逆矩阵
+	invRecMatrix, err := opmatrix.GaussJordanInverse(recMatrix)
+	if err != nil {
+		return nil, nil, fmt.Errorf("Matrix inversion failed: %v", err)
+	}
+
+	// 5. 计算系数向量 w
+	one := make([][]*big.Int, 1)
+	one[0] = make([]*big.Int, rows)
+	for i := 0; i < rows; i++ {
+		one[0][i] = big.NewInt(0)
+	}
+	one[0][0] = big.NewInt(1)
+
+	w, err = opmatrix.MultiplyMatrix(one, invRecMatrix)
+	if err != nil {
+		return nil, nil, fmt.Errorf("Matrix multiplication (w) failed: %v", err)
+	}
+
+	return w, rowMap, nil
+}
+
+// ReconG1 负责利用系数向量 w 和份额 shares 恢复秘密值 s
+// 修正点：rowMap 类型为 []*node.Node
+func ReconG1(w [][]*big.Int, rowMap []*node.Node, shares map[string]*bn256.G1) (*bn256.G1, error) {
+	// 1. 重新构建索引列表 I (逻辑需与 Convert 中完全一致)
+	var I []int
+	// 修正点：使用下标遍历
+	for i := 0; i < len(rowMap); i++ {
+		nodeItem := rowMap[i]
+		if nodeItem.IsLeaf {
+			if _, ok := shares[nodeItem.Attribute]; ok {
+				I = append(I, i)
+			}
+		}
+	}
+
+	if len(I) == 0 {
+		return nil, fmt.Errorf("no valid shares found during reconstruction")
+	}
+
+	rows := len(I)
+
+	// 2. 构造共享值向量 shares2
+	shares2 := make([][]*bn256.G1, rows)
+	for i := 0; i < rows; i++ {
+		// 修正点：通过 rowMap[I[i]] 访问节点
+		attrName := rowMap[I[i]].Attribute
+		if shares[attrName] == nil {
+			return nil, fmt.Errorf("share for attribute %s is nil", attrName)
+		}
+		shares2[i] = []*bn256.G1{shares[attrName]}
+	}
+
+	// 3. 计算最终结果 s = w * shares
 	reconS, err := opmatrix.MultiplyMatrixG1(w, shares2)
 	if err != nil {
 		return nil, fmt.Errorf("Matrix multiplication (result) failed: %v", err)

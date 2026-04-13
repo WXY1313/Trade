@@ -7,10 +7,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/WXY1313/Trade/Crypto/CPABE/node"
-	"github.com/WXY1313/Trade/Crypto/SymEnc"
+	"Trade/Crypto/CPABE/node"
+	"Trade/Crypto/SymEnc"
 
-	"github.com/fentec-project/bn256"
+	bn256 "github.com/ethereum/go-ethereum/crypto/bn256/cloudflare"
 	"github.com/fentec-project/gofe/sample"
 	"github.com/stretchr/testify/require"
 )
@@ -58,7 +58,8 @@ func TestAll(t *testing.T) {
 
 	Mes := "Secret"
 	k, _ := sampler.Sample()
-	K := new(bn256.GT).ScalarBaseMult(k)
+	GT := bn256.Pair(new(bn256.G1).ScalarBaseMult(big.NewInt(1)), new(bn256.G2).ScalarBaseMult(big.NewInt(1)))
+	K := new(bn256.GT).ScalarMult(GT, k)
 	ct := SymEnc.XOREncryptDecrypt([]byte(Mes), SymEnc.KDF(K))
 	fmt.Printf("CT=%v\n", string(ct))
 

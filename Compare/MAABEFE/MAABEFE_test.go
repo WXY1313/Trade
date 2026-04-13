@@ -8,20 +8,22 @@ import (
 	"testing"
 	"time"
 
-	"github.com/WXY1313/Trade/Crypto/CPABE/node"
-	"github.com/WXY1313/Trade/Crypto/SymEnc"
+	"Trade/Crypto/CPABE/node"
+	"Trade/Crypto/SymEnc"
 
-	"github.com/fentec-project/bn256"
+	bn256 "github.com/ethereum/go-ethereum/crypto/bn256/cloudflare"
 	"github.com/fentec-project/gofe/sample"
 	"github.com/stretchr/testify/assert"
 )
 
 func TestMAABEFE(t *testing.T) {
-	n := float64(500)
+	n := float64(1)
 	nx := 3
 	tx := (nx + 1) / 2
 	// create new MAABE struct with Global Parameters
-	_, gt, _ := bn256.RandomGT(rand.Reader)
+	x, _ := rand.Int(rand.Reader, bn256.Order)
+	GT := bn256.Pair(new(bn256.G1).ScalarBaseMult(big.NewInt(1)), new(bn256.G2).ScalarBaseMult(big.NewInt(1)))
+	gt := new(bn256.GT).ScalarMult(GT, x)
 	SymEnc.KDF(gt)
 	pp := GlobalSetup()
 
@@ -68,7 +70,7 @@ func TestMAABEFE(t *testing.T) {
 	// encrypt the message with the decryption policy in msp
 	sampler := sample.NewUniform(pp.P)
 	m, _ := sampler.Sample()
-	symKey := new(bn256.GT).ScalarBaseMult(m)
+	symKey := new(bn256.GT).ScalarMult(GT, m)
 	ciphertext := SymEnc.XOREncryptDecrypt([]byte(msg), SymEnc.KDF(symKey))
 
 	var ct *Cipher

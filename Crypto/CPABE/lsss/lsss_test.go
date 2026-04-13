@@ -5,9 +5,9 @@ import (
 	"math/big"
 	"testing"
 
-	"github.com/WXY1313/Trade/Crypto/CPABE/node"
+	"Trade/Crypto/CPABE/node"
 
-	"github.com/fentec-project/bn256"
+	bn256 "github.com/ethereum/go-ethereum/crypto/bn256/cloudflare"
 )
 
 func TestLSSS(t *testing.T) {
@@ -63,7 +63,11 @@ func TestLSSS(t *testing.T) {
 	for _, at := range attrSet {
 		Q[at] = sharesG1[at]
 	}
-	recoveredSecret, err := ReconG1(root, Q)
+
+	w, rowMap, _ := Convert(root, Q)
+	recoveredSecret, err := ReconG1(w, rowMap, Q)
+
+	//recoveredSecret, err := ReconG1(root, Q)
 	if err != nil {
 		t.Fatalf("Reconstruction failed: %v", err)
 	}

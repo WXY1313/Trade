@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"math/big"
 
-	"github.com/fentec-project/bn256"
+	bn256 "github.com/ethereum/go-ethereum/crypto/bn256/cloudflare"
 )
 
 func MultiplyMatrix(A, B [][]*big.Int) ([][]*big.Int, error) {
@@ -102,6 +102,7 @@ func MultiplyMatrixG1(A [][]*big.Int, B [][]*bn256.G1) ([][]*bn256.G1, error) {
 
 func MultiplyMatrixGT(A [][]*big.Int, B [][]*bn256.GT) ([][]*bn256.GT, error) {
 	// 1. 获取维度
+	GT := bn256.Pair(new(bn256.G1).ScalarBaseMult(big.NewInt(1)), new(bn256.G2).ScalarBaseMult(big.NewInt(1)))
 	n := len(A) // A 的行数
 	if n == 0 {
 		return nil, fmt.Errorf("矩阵 A 为空")
@@ -127,7 +128,7 @@ func MultiplyMatrixGT(A [][]*big.Int, B [][]*bn256.GT) ([][]*bn256.GT, error) {
 		for j := range C[i] {
 			// 初始化为 G1 的无穷远点 (Identity Element)
 			// 类似于整数乘法中的 0，加法中的 0
-			C[i][j] = new(bn256.GT).ScalarBaseMult(big.NewInt(0))
+			C[i][j] = new(bn256.GT).ScalarMult(GT, big.NewInt(0))
 		}
 	}
 
@@ -136,7 +137,7 @@ func MultiplyMatrixGT(A [][]*big.Int, B [][]*bn256.GT) ([][]*bn256.GT, error) {
 		for j := 0; j < p; j++ {
 			// 计算 C[i][j] = Sum (A[i][k] * B[k][j])
 			// 我们需要一个累加器，初始为 Identity
-			sumPoint := new(bn256.GT).ScalarBaseMult(big.NewInt(0))
+			sumPoint := new(bn256.GT).ScalarMult(GT, big.NewInt(0))
 
 			for k := 0; k < m; k++ {
 				// 跳过空值

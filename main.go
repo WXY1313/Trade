@@ -7,76 +7,59 @@ import (
 	"fmt"
 	"log"
 	"math/big"
-	"os"
 	"strconv"
 
-	DT "github.com/WXY1313/Trade/Compare/Ours"
-	"github.com/WXY1313/Trade/Crypto/CPABE/node"
-	"github.com/WXY1313/Trade/Crypto/Operation"
-	"github.com/WXY1313/Trade/Crypto/SymEnc"
-	Contract "github.com/WXY1313/Trade/gen"
-	"github.com/fentec-project/bn256"
+	DT "Trade/Compare/Ours"
+	"Trade/Crypto/CPABE/lsss"
+	"Trade/Crypto/CPABE/node"
+	"Trade/Crypto/Operation"
+	"Trade/Crypto/SymEnc"
+	"Trade/compile/contract"
+	"Trade/utils"
 
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
-	"github.com/ethereum/go-ethereum/accounts/keystore"
 	"github.com/ethereum/go-ethereum/common"
-
 	"github.com/ethereum/go-ethereum/crypto"
+	bn256 "github.com/ethereum/go-ethereum/crypto/bn256/cloudflare"
 	"github.com/ethereum/go-ethereum/ethclient"
 )
 
 func main() {
-	// 1. Load encrypted wallet-file
-	walletPath := "./wallet/UTC--2025-05-29T13-51-04.984946200Z--9dda53414c9a26b1054427718cd991ec14bd5fd4"
-	walletData, err := os.ReadFile(walletPath)
+	//Deploy the smart contract
+	contract_name := "Trade"
+	client, err := ethclient.Dial("http://127.0.0.1:8545")
 	if err != nil {
-		log.Fatalf("Read wallet-file fail: %v", err)
+		log.Fatalf("Failed to connect to the Ethereum client: %v", err)
 	}
 
-	// 2. Decrypt wallet
-	key, err := keystore.DecryptKey(walletData, "password")
+	privatekey := utils.GetENV("PRIVATE_KEY_1")
+
+	auth := utils.Transact(client, privatekey, big.NewInt(0))
+
+	// 打印账户余额
+	fromAddress := auth.From
+	balance, err := client.BalanceAt(context.Background(), fromAddress, nil)
+	fmt.Printf("Deploy account balance: %s wei\n", balance.String())
+
+	address, tx := utils.Deploy(client, contract_name, auth)
+	receipt, err := bind.WaitMined(context.Background(), client, tx)
 	if err != nil {
-		log.Fatalf("Decrypt wallet fail: %v", err)
+		log.Fatalf("Tx receipt failed: %v", err)
 	}
+	fmt.Printf("Deploy Gas used: %d\n", receipt.GasUsed)
 
-	// 3. Link Sepolia network
-	client, err := ethclient.Dial("https://sepolia.infura.io/v3/de28dcce3b8f4d319a904bfab58d1e1a")
+	Contract, err := contract.NewContract(common.HexToAddress(address.Hex()), client)
 	if err != nil {
-		log.Fatalf("Fail to link Sepolia nodes: %v", err)
+		fmt.Println(err)
 	}
-	defer client.Close()
+	fmt.Printf("%v\n", Contract)
 
-	// 4. Obtain chain-ID and gas price
-	chainID, err := client.NetworkID(context.Background())
-	if err != nil {
-		log.Fatalf("Fail to obtain network-ID: %v", err)
-	}
-
-	// 5. Build contract instance
-	contractAddress := common.HexToAddress("0xFe0983464b4DBb79Ec9334317448d25A78E6aD11")
-	contract, err := Contract.NewContract(contractAddress, client)
-	fmt.Printf("Contract=%v\n", contract)
-	if err != nil {
-		log.Fatalf("Fail to build contract instance: %v", err)
-	}
-
-	// 6. prepare transaction options
-	auth, err := bind.NewKeyedTransactorWithChainID(key.PrivateKey, chainID)
-	if err != nil {
-		log.Fatalf("Fail to build transaction signature: %v", err)
-	}
-
-	// set gas parameters
-	auth.GasLimit = 300000000
-	//auth.GasLimit = 16777216
-	auth.Context = context.Background()
-
-	//==========================================System Initialization===========================================//
+	//======================================System Initialization=====================================//
 	//Setup Phase
 	MPK, MSK, SPK, SSK := DT.Setup()
 
-	var hxsG1 []Contract.TradeG1Point
-	var hxsG2 []Contract.TradeG2Point
+	var hxsG1 []contract.TradeG1Point
+	var hxsG2 []contract.TradeG2Point
 	var attrHxs [][32]byte
 	for at, value := range MPK.HXsG1 {
 		attrHxs = append(attrHxs, crypto.Keccak256Hash([]byte(at)))
@@ -84,45 +67,21 @@ func main() {
 		hxsG2 = append(hxsG2, Operation.G2ToG2Point(MPK.HXsG2[at]))
 	}
 
-	code, err := client.CodeAt(context.Background(), contractAddress, nil)
-	if err != nil {
-		log.Fatal("Fail to obtain contract code：", err)
-	}
-	if len(code) == 0 {
-		log.Fatalf("Fail to deploy contract code", contractAddress.Hex())
-	}
-
 	//KGC Sends UploadMPK transaction
-	auth1, err := bind.NewKeyedTransactorWithChainID(key.PrivateKey, chainID)
-	if err != nil {
-		log.Fatalf("Fail to build transaction signature: %v", err)
-	}
-	tx1, err := contract.UploadMPK(auth1, Operation.G1ToG1Point(MPK.G1), Operation.G2ToG2Point(MPK.G2), Operation.G1ToG1Point(MPK.U1), Operation.G2ToG2Point(MPK.U2), Operation.G1ToG1Point(MPK.H1), Operation.G2ToG2Point(MPK.H2), Operation.G1ToG1Point(MPK.AlphaG1), attrHxs, hxsG1, hxsG2)
-	if err != nil {
-		log.Fatalf("Fail to invoke UploadMPK: %v", err)
-	}
+	auth1 := utils.Transact(client, privatekey, big.NewInt(0))
+	tx1, err := Contract.UploadMPK(auth1, Operation.G1ToG1Point(MPK.G1), Operation.G2ToG2Point(MPK.G2),
+		Operation.G1ToG1Point(MPK.U1), Operation.G2ToG2Point(MPK.U2), Operation.G1ToG1Point(MPK.H1),
+		Operation.G2ToG2Point(MPK.H2), Operation.G1ToG1Point(MPK.AlphaG1), attrHxs, hxsG1, hxsG2)
 	receipt1, err := bind.WaitMined(context.Background(), client, tx1)
-	if err != nil {
-		log.Fatalf("Fail to ensure transaction: %v", err)
-	}
 	if receipt1.Status == 0 {
 		log.Fatal("Fial to excute transaction")
 	}
 	fmt.Printf("🌳 UploadMPK Gas used: %d\n", receipt1.GasUsed)
 
 	//Seller uploads the master key pair SPK
-	auth2, err := bind.NewKeyedTransactorWithChainID(key.PrivateKey, chainID)
-	if err != nil {
-		log.Fatalf("Fail to build transaction signature: %v", err)
-	}
-	tx2, err := contract.UploadSPK(auth2, Operation.G1ToG1Point(SPK.GammaG1))
-	if err != nil {
-		log.Fatalf("Fail to invoke UploadSystemKey: %v", err)
-	}
+	auth2 := utils.Transact(client, privatekey, big.NewInt(0))
+	tx2, err := Contract.UploadSPK(auth2, Operation.G1ToG1Point(SPK.GammaG1))
 	receipt2, err := bind.WaitMined(context.Background(), client, tx2)
-	if err != nil {
-		log.Fatalf("Fail to ensure transaction: %v", err)
-	}
 	if receipt2.Status == 0 {
 		log.Fatal("Fial to excute transaction")
 	}
@@ -138,11 +97,11 @@ func main() {
 	pku := new(bn256.G1).ScalarMult(MPK.G1, sku)
 	vku := new(bn256.G2).ScalarMult(MPK.G2, sku)
 	//Seller and buyer sends their public key respectively
-	auth3, err := bind.NewKeyedTransactorWithChainID(key.PrivateKey, chainID)
+	auth3 := utils.Transact(client, privatekey, big.NewInt(0))
 	if err != nil {
 		log.Fatalf("Fail to build transaction signature: %v", err)
 	}
-	tx3, err := contract.UploadPK(auth3, Operation.G1ToG1Point(pko), Operation.G2ToG2Point(vko), Operation.G1ToG1Point(pku), Operation.G2ToG2Point(vku))
+	tx3, err := Contract.UploadPK(auth3, Operation.G1ToG1Point(pko), Operation.G2ToG2Point(vko), Operation.G1ToG1Point(pku), Operation.G2ToG2Point(vku))
 	if err != nil {
 		log.Fatalf("Fail to invoke UploadPK: %v", err)
 	}
@@ -168,49 +127,71 @@ func main() {
 	// Hide the trading message Message as the ciphertext ct using a symmetric key SymKey
 	ct := SymEnc.XOREncryptDecrypt([]byte(Message), SymEnc.KDF(SymKey))
 
-	//Construct the buying policy
-	//Access Policy
-	nx := 1
-	tx := (nx + 1) / 2
-	root := node.NewNode(false, 3, 2, big.NewInt(int64(0)), "")
-	P_A := node.NewNode(true, 0, 1, big.NewInt(int64(1)), "Attr1")
-	P_B := node.NewNode(true, 0, 1, big.NewInt(int64(2)), "Attr2")
-	P_1 := node.NewNode(false, nx, tx, big.NewInt(int64(3)), "")
-	root.Children = []*node.Node{P_A, P_B, P_1}
+	//ABE Access Policy
+	nx := 13
+	ntx := (nx + 1) / 2
+	abeRoot := node.NewNode(false, 3, 2, big.NewInt(0), "")
+	P_A := node.NewNode(true, 0, 1, big.NewInt(1), "Attr1")
+	P_B := node.NewNode(true, 0, 1, big.NewInt(2), "Attr2")
+	P_1 := node.NewNode(false, nx, ntx, big.NewInt(3), "")
+	abeRoot.Children = []*node.Node{P_A, P_B, P_1}
 	for i := 0; i < nx; i++ {
-		P_1.Children = append(P_1.Children, node.NewNode(true, 0, 1, big.NewInt(int64(i+1)), "Attr"+strconv.Itoa(i+3)))
+		attrName := "Attr" + strconv.Itoa(i+3)
+		leaf := node.NewNode(true, 0, 1, big.NewInt(int64(i+4)), attrName)
+		P_1.Children = append(P_1.Children, leaf)
 	}
-	matrix, _ := node.Convert(root)
+	matrix, _ := node.Convert(abeRoot)
+	abePolicy := node.ConvertTreeToInputs(abeRoot)
+	CT := DT.Encrypt(MPK, SPK, abeRoot, s, pko)
 	//Authorized path
-	path := node.NewNode(false, 2, 2, big.NewInt(int64(0)), "")
+	abePath := node.NewNode(false, 2, 2, big.NewInt(int64(0)), "")
 	Path_A := node.NewNode(true, 0, 1, big.NewInt(int64(1)), "Attr1")
-	Path_1 := node.NewNode(false, tx, tx, big.NewInt(int64(3)), "")
-	Path_1.Children = P_1.Children[:tx]
-	path.Children = []*node.Node{Path_A, Path_1}
-	CT := DT.Encrypt(MPK, SPK, root, s, pko)
+	Path_1 := node.NewNode(false, ntx, ntx, big.NewInt(int64(3)), "")
+	Path_1.Children = P_1.Children[:ntx]
+	abePath.Children = []*node.Node{Path_A, Path_1}
+	attrSet := node.RowToAttrib(abePath)
+	abeQ := make(map[string]*bn256.G1)
+	for _, at := range attrSet {
+		abeQ[at] = CT.C1.C3[at]
+	}
+	abeW, abe_RowMap, _ := lsss.Convert(abeRoot, abeQ)
+	abeRowMap := node.ConvertNodesToNodeInputs(abe_RowMap)
 
 	//Convert ABE Ciphertext
-	abeNodes := Operation.ConvertTreeToInputs(root)
-	var abeC1 []Contract.TradeG1Point
-	var abeC2 []Contract.TradeG1Point
-	var abeC3 []Contract.TradeG1Point
+	var abeC1 []contract.TradeG1Point
+	var abeC2 []contract.TradeG1Point
+	var abeC3 []contract.TradeG1Point
 	var abeAttr [][32]byte
-	for _, at := range node.RowToAttrib(root) {
+	for _, at := range node.RowToAttrib(abeRoot) {
 		abeAttr = append(abeAttr, crypto.Keccak256Hash([]byte(at)))
 		abeC1 = append(abeC1, Operation.G1ToG1Point(CT.C1.C1[at]))
 		abeC2 = append(abeC2, Operation.G1ToG1Point(CT.C1.C2[at]))
 		abeC3 = append(abeC3, Operation.G1ToG1Point(CT.C1.C3[at]))
 	}
+	var abePathAttr [][32]byte
+	for _, at := range node.RowToAttrib(abePath) {
+		abePathAttr = append(abePathAttr, crypto.Keccak256Hash([]byte(at)))
+	}
 
-	auth4, err := bind.NewKeyedTransactorWithChainID(key.PrivateKey, chainID)
+	//===========================================================================================//
+	//Ciphetext Check
+	tradePolicy := node.ConvertTreeToInputs(CT.Policy)
+	tradeQ := make(map[string]*bn256.G1)
+	var tradePathAttr [][32]byte
+	tradePathAttr = append(tradePathAttr, crypto.Keccak256Hash([]byte("buy")))
+	tradePathAttr = append(tradePathAttr, crypto.Keccak256Hash([]byte("per")))
+	tradeQ["buy"] = CT.C1.Com
+	tradeQ["per"] = CT.C2Com
+	tradeW, _, _ := lsss.Convert(CT.Policy, tradeQ)
+	auth4 := utils.Transact(client, privatekey, big.NewInt(0))
 	if err != nil {
 		log.Fatalf("Fail to build transaction signature: %v", err)
 	}
-	tx4, err := contract.UploadABECipher(auth4, Operation.G1ToG1Point(CT.Com), abeNodes,
+	tx4, err := Contract.UploadABECipher(auth4, abeW, abeRowMap, abePathAttr, abePolicy,
 		Operation.G1ToG1Point(CT.C1.Com), Operation.G1ToG1Point(CT.C1.C), Operation.G2ToG2Point(CT.C1.C_),
-		abeAttr, abeC1, abeC2, abeC3)
+		abeC1, abeC2, abeC3)
 	if err != nil {
-		log.Fatalf("Fail to invoke UploadABECipher: %v", err)
+		log.Fatalf("Fail to invoke ABECipherCheck: %v", err)
 	}
 	receipt4, err := bind.WaitMined(context.Background(), client, tx4)
 	if err != nil {
@@ -219,13 +200,15 @@ func main() {
 	if receipt4.Status == 0 {
 		log.Fatal("Fial to excute transaction")
 	}
-	fmt.Printf("🌳 UploadABECipher Gas used: %d\n", receipt4.GasUsed)
+	fmt.Printf("🌳 ABECipherCheck Gas used: %d\n", receipt4.GasUsed)
+	verABE, _ := Contract.GetABEResult(&bind.CallOpts{})
+	fmt.Printf("The ABE Ciphertext is %v\n", verABE)
 
-	auth5, err := bind.NewKeyedTransactorWithChainID(key.PrivateKey, chainID)
+	auth5 := utils.Transact(client, privatekey, big.NewInt(0))
 	if err != nil {
 		log.Fatalf("Fail to build transaction signature: %v", err)
 	}
-	tx5, err := contract.UploadPayCipher(auth5, Operation.G1ToG1Point(CT.C2), Operation.G1ToG1Point(CT.C2Com),
+	tx5, err := Contract.UploadPayCipher(auth5, tradePolicy, tradeW, Operation.G1ToG1Point(CT.Com), Operation.G1ToG1Point(CT.C2), Operation.G1ToG1Point(CT.C2Com),
 		Operation.G1ToG1Point(CT.C3.Com), Operation.G1ToG1Point(CT.C3.C1), Operation.G2ToG2Point(CT.C3.C2))
 	if err != nil {
 		log.Fatalf("Fail to invoke UploadPayCipher: %v", err)
@@ -238,23 +221,18 @@ func main() {
 		log.Fatal("Fial to excute transaction")
 	}
 	fmt.Printf("🌳 UploadPayCipher Gas used: %d\n", receipt5.GasUsed)
-
-	//Ciphetext Check
-	cipherVer := DT.EncVer(MPK, SPK, CT, vko, path)
-	fmt.Printf("Ciphertext is %v\n", cipherVer)
+	verPay, _ := Contract.GetPayResult(&bind.CallOpts{})
+	fmt.Printf("The Pay Ciphertext is %v\n", verPay)
 
 	//Pay-per Phase
 	//Seller computes re-encrypted key RK
 	RK := DT.ReKeyGen(MPK, CT, sko, pko, pku)
-	fmt.Printf("Offchain ReKey=%v\n", RK)
-	fmt.Printf("RK1=%v\n", Operation.G1ToG1Point(RK.D1))
-	fmt.Printf("RK2=%v\n", Operation.G1ToG1Point(RK.D2))
 	//Check the validation of RK
-	auth6, err := bind.NewKeyedTransactorWithChainID(key.PrivateKey, chainID)
+	auth6 := utils.Transact(client, privatekey, big.NewInt(0))
 	if err != nil {
 		log.Fatalf("Fail to build transaction signature: %v", err)
 	}
-	tx6, err := contract.ReKeyVer(auth6, Operation.G1ToG1Point(RK.D1), Operation.G1ToG1Point(RK.D2))
+	tx6, err := Contract.ReKeyVer(auth6, Operation.G1ToG1Point(RK.D1), Operation.G1ToG1Point(RK.D2))
 	if err != nil {
 		log.Fatalf("Fail to invoke ReKeyVer: %v", err)
 	}
@@ -266,11 +244,11 @@ func main() {
 		log.Fatal("Fial to excute transaction")
 	}
 	fmt.Printf("🌳 ReKeyVer Gas used: %d\n", receipt6.GasUsed)
-	verRK, _ := contract.GetRKResult(&bind.CallOpts{})
+	verRK, _ := Contract.GetRKResult(&bind.CallOpts{})
 	fmt.Printf("The Verification results of ReKey is %v\n", verRK)
 
 	//Decrypt CT using pay-per buyer's RK and attribute key AK
-	recoverSymKey := DT.PerDecrypt(path, MPK, CT, RK, sku, AK)
+	recoverSymKey := DT.PerDecrypt(abePath, MPK, CT, RK, sku, AK)
 	if !Operation.GTEqual(SymKey, recoverSymKey) {
 		fmt.Printf("decryption failed: SymKey mismatch\noriginal: %v\nrecovered: %v", SymKey, recoverSymKey)
 	} else {
@@ -282,11 +260,11 @@ func main() {
 	//Seller computes subscription key RK
 	SK := DT.SubKeyGen(SPK, SSK, pku)
 	//Check the validation of RK
-	auth7, err := bind.NewKeyedTransactorWithChainID(key.PrivateKey, chainID)
+	auth7 := utils.Transact(client, privatekey, big.NewInt(0))
 	if err != nil {
 		log.Fatalf("Fail to build transaction signature: %v", err)
 	}
-	tx7, err := contract.SubKeyVer(auth7, Operation.G1ToG1Point(SK.SK1), Operation.G1ToG1Point(SK.SK2))
+	tx7, err := Contract.SubKeyVer(auth7, Operation.G1ToG1Point(SK.SK1), Operation.G1ToG1Point(SK.SK2))
 	if err != nil {
 		log.Fatalf("Fail to invoke SubKeyVer: %v", err)
 	}
@@ -298,10 +276,10 @@ func main() {
 		log.Fatal("Fial to excute transaction")
 	}
 	fmt.Printf("🌳 SubKeyVer Gas used: %d\n", receipt7.GasUsed)
-	verSK, _ := contract.GetRKResult(&bind.CallOpts{})
+	verSK, _ := Contract.GetSKResult(&bind.CallOpts{})
 	fmt.Printf("The Verification results of SubKey is %v\n", verSK)
 	//Decrypt CT using subscription buyer's RK and attribute key AK
-	recoverSymKey = DT.SubDecrypt(path, MPK, SPK, CT, matrix, SK, sku, AK)
+	recoverSymKey = DT.SubDecrypt(abePath, MPK, SPK, CT, matrix, SK, sku, AK)
 
 	if !Operation.GTEqual(SymKey, recoverSymKey) {
 		fmt.Printf("decryption failed: SymKey mismatch\noriginal: %v\nrecovered: %v", SymKey, recoverSymKey)
