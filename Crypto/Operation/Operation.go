@@ -6,7 +6,9 @@ import (
 	"encoding/base64"
 	"fmt"
 	"math/big"
+	"math/rand"
 	"sort"
+	"time"
 
 	"Trade/compile/contract"
 
@@ -14,6 +16,27 @@ import (
 	"github.com/fentec-project/gofe/data"
 	"github.com/fentec-project/gofe/sample"
 )
+
+func RandomString(sizeKB float64) string {
+	// 定义允许的字符集：大写字母、小写字母、数字
+	const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+
+	// 计算字符串需要的字节数
+	numBytes := int(sizeKB * 1024) // size in bytes (1 KB = 1024 bytes)
+
+	// 使用当前时间作为随机数种子
+	rand.Seed(time.Now().UnixNano())
+
+	// 创建一个字符切片
+	var randomString []byte
+	for i := 0; i < numBytes; i++ {
+		randomByte := charset[rand.Intn(len(charset))]
+		randomString = append(randomString, randomByte)
+	}
+
+	// 返回生成的字符串
+	return string(randomString)
+}
 
 func MapToVector(m map[string]*big.Int) data.Vector {
 

@@ -32,9 +32,17 @@ func main() {
 		log.Fatalf("Failed to connect to the Ethereum client: %v", err)
 	}
 
+	//KGC
 	privatekey := utils.GetENV("PRIVATE_KEY_1")
-
 	auth := utils.Transact(client, privatekey, big.NewInt(0))
+	//seller
+	sellerKey := utils.GetENV("PRIVATE_KEY_1")
+	sellerAuth := utils.Transact(client, sellerKey, big.NewInt(0))
+	sellerAddress := sellerAuth.From
+	//buyer
+	buyerKey := utils.GetENV("PRIVATE_KEY_2")
+	buyerAuth := utils.Transact(client, buyerKey, big.NewInt(0))
+	buyerAddress := buyerAuth.From
 
 	// 打印账户余额
 	fromAddress := auth.From
@@ -55,7 +63,6 @@ func main() {
 	fmt.Printf("%v\n", Contract)
 
 	//======================================System Initialization=====================================//
-	//Setup Phase
 	MPK, MSK, SPK, SSK := DT.Setup()
 
 	var hxsG1 []contract.TradeG1Point
@@ -79,7 +86,7 @@ func main() {
 	fmt.Printf("🌳 UploadMPK Gas used: %d\n", receipt1.GasUsed)
 
 	//Seller uploads the master key pair SPK
-	auth2 := utils.Transact(client, privatekey, big.NewInt(0))
+	auth2 := utils.Transact(client, sellerKey, big.NewInt(0))
 	tx2, err := Contract.UploadSPK(auth2, Operation.G1ToG1Point(SPK.GammaG1))
 	receipt2, err := bind.WaitMined(context.Background(), client, tx2)
 	if receipt2.Status == 0 {
@@ -87,32 +94,51 @@ func main() {
 	}
 	fmt.Printf("🌳 UploadSPK Gas used: %d\n", receipt2.GasUsed)
 
-	//Register  Phase
+	//====================================Register  Phase================================================//
 	//Seller computes own key pair (sko,pko)
 	sko, _ := rand.Int(rand.Reader, bn256.Order)
 	pko := new(bn256.G1).ScalarMult(MPK.H1, sko)
 	vko := new(bn256.G2).ScalarMult(MPK.H2, sko)
+	//Seller sends their public key
+	authSeller3 := utils.Transact(client, sellerKey, big.NewInt(0))
+	if err != nil {
+		log.Fatalf("Fail to build transaction signature: %v", err)
+	}
+	txSeller3, err := Contract.UploadSellerPK(authSeller3, Operation.G1ToG1Point(pko), Operation.G2ToG2Point(vko))
+	if err != nil {
+		log.Fatalf("Fail to invoke UploadPK: %v", err)
+	}
+	receiptSeller3, err := bind.WaitMined(context.Background(), client, txSeller3)
+	if err != nil {
+		log.Fatalf("Fail to ensure transaction: %v", err)
+	}
+	if receiptSeller3.Status == 0 {
+		log.Fatal("Fial to excute transaction")
+	}
+	fmt.Printf("🌳 UploadSellerPK Gas used: %d\n", receiptSeller3.GasUsed)
+
 	//Buyer computes own key pair (sku,pku)
 	sku, _ := rand.Int(rand.Reader, bn256.Order)
 	pku := new(bn256.G1).ScalarMult(MPK.G1, sku)
 	vku := new(bn256.G2).ScalarMult(MPK.G2, sku)
-	//Seller and buyer sends their public key respectively
-	auth3 := utils.Transact(client, privatekey, big.NewInt(0))
+	//Seller sends their public key
+	authBuyer3 := utils.Transact(client, buyerKey, big.NewInt(0))
 	if err != nil {
 		log.Fatalf("Fail to build transaction signature: %v", err)
 	}
-	tx3, err := Contract.UploadPK(auth3, Operation.G1ToG1Point(pko), Operation.G2ToG2Point(vko), Operation.G1ToG1Point(pku), Operation.G2ToG2Point(vku))
+	txBuyer3, err := Contract.UploadBuyerPK(authBuyer3, Operation.G1ToG1Point(pku), Operation.G2ToG2Point(vku))
 	if err != nil {
 		log.Fatalf("Fail to invoke UploadPK: %v", err)
 	}
-	receipt3, err := bind.WaitMined(context.Background(), client, tx3)
+	receiptBuyer3, err := bind.WaitMined(context.Background(), client, txBuyer3)
 	if err != nil {
 		log.Fatalf("Fail to ensure transaction: %v", err)
 	}
-	if receipt3.Status == 0 {
+	if receiptBuyer3.Status == 0 {
 		log.Fatal("Fial to excute transaction")
 	}
-	fmt.Printf("🌳 UploadPK Gas used: %d\n", receipt3.GasUsed)
+	fmt.Printf("🌳 UploadBuyerPK Gas used: %d\n", receiptSeller3.GasUsed)
+
 	//KGC generates attribute key for the buyer
 	var buyerAttrs []string
 	for i := 1; i <= 20; i++ {
@@ -120,15 +146,15 @@ func main() {
 	}
 	AK := DT.AKGen(MPK, MSK, buyerAttrs)
 
-	//Encrypt Phase
+	//======================================Encrypt Phase===========================================//
+	//Seller generates the data ciphertext
 	Message := "Secret"
 	s, _ := rand.Int(rand.Reader, bn256.Order)
 	SymKey := new(bn256.GT).ScalarMult(bn256.Pair(MPK.H1, MPK.U2), s)
 	// Hide the trading message Message as the ciphertext ct using a symmetric key SymKey
 	ct := SymEnc.XOREncryptDecrypt([]byte(Message), SymEnc.KDF(SymKey))
-
 	//ABE Access Policy
-	nx := 13
+	nx := 1
 	ntx := (nx + 1) / 2
 	abeRoot := node.NewNode(false, 3, 2, big.NewInt(0), "")
 	P_A := node.NewNode(true, 0, 1, big.NewInt(1), "Attr1")
@@ -173,7 +199,6 @@ func main() {
 		abePathAttr = append(abePathAttr, crypto.Keccak256Hash([]byte(at)))
 	}
 
-	//===========================================================================================//
 	//Ciphetext Check
 	tradePolicy := node.ConvertTreeToInputs(CT.Policy)
 	tradeQ := make(map[string]*bn256.G1)
@@ -183,7 +208,7 @@ func main() {
 	tradeQ["buy"] = CT.C1.Com
 	tradeQ["per"] = CT.C2Com
 	tradeW, _, _ := lsss.Convert(CT.Policy, tradeQ)
-	auth4 := utils.Transact(client, privatekey, big.NewInt(0))
+	auth4 := utils.Transact(client, sellerKey, big.NewInt(0))
 	if err != nil {
 		log.Fatalf("Fail to build transaction signature: %v", err)
 	}
@@ -204,7 +229,7 @@ func main() {
 	verABE, _ := Contract.GetABEResult(&bind.CallOpts{})
 	fmt.Printf("The ABE Ciphertext is %v\n", verABE)
 
-	auth5 := utils.Transact(client, privatekey, big.NewInt(0))
+	auth5 := utils.Transact(client, sellerKey, big.NewInt(0))
 	if err != nil {
 		log.Fatalf("Fail to build transaction signature: %v", err)
 	}
@@ -224,9 +249,44 @@ func main() {
 	verPay, _ := Contract.GetPayResult(&bind.CallOpts{})
 	fmt.Printf("The Pay Ciphertext is %v\n", verPay)
 
-	//Pay-per Phase
+	//Seller uploads the data description;
+	ipfsCID := "QmXabc123ExampleCID"
+	description := Operation.RandomString(1.0)
+	fmt.Printf("Description=%v\n", description)
+	PID := crypto.Keccak256Hash([]byte(ipfsCID))
+	price := big.NewInt(1e14)
+	auth11 := utils.Transact(client, sellerKey, big.NewInt(0))
+	tx11, err := Contract.Sale(auth11, PID, price, description)
+	if err != nil {
+		log.Fatalf("❌ Sale failed: %v", err)
+	}
+	receipt11, err := bind.WaitMined(context.Background(), client, tx11)
+	if err != nil {
+		log.Fatalf("❌ WaitMined failed: %v", err)
+	}
+	if receipt.Status == 0 {
+		log.Fatal("❌ Transaction reverted")
+	}
+	fmt.Printf("✅ Sale Function, Gas used: %d\n", receipt11.GasUsed)
+	//=============================================Pay-per Phase==================================//
 	//Seller computes re-encrypted key RK
 	RK := DT.ReKeyGen(MPK, CT, sko, pko, pku)
+
+	//Buyer sends the transaction
+	auth12 := utils.Transact(client, buyerKey, price)
+	tx12, err := Contract.PayPer(auth12, sellerAddress, PID)
+	if err != nil {
+		log.Fatalf("❌ PayPer failed: %v", err)
+	}
+	receipt12, err := bind.WaitMined(context.Background(), client, tx12)
+	if err != nil {
+		log.Fatalf("❌ WaitMined failed: %v", err)
+	}
+	if receipt12.Status == 0 {
+		log.Fatal("❌ Transaction reverted")
+	}
+	fmt.Printf("✅ PayPer Function, Gas used: %d\n", receipt12.GasUsed)
+
 	//Check the validation of RK
 	auth6 := utils.Transact(client, privatekey, big.NewInt(0))
 	if err != nil {
@@ -246,6 +306,20 @@ func main() {
 	fmt.Printf("🌳 ReKeyVer Gas used: %d\n", receipt6.GasUsed)
 	verRK, _ := Contract.GetRKResult(&bind.CallOpts{})
 	fmt.Printf("The Verification results of ReKey is %v\n", verRK)
+	//Seller withdraw the payment after passing the check
+	auth13 := utils.Transact(client, sellerKey, big.NewInt(0))
+	tx13, err := Contract.PerWithdraw(auth13, buyerAddress, PID)
+	if err != nil {
+		log.Fatalf("Withdraw failed: %v", err)
+	}
+	receipt13, err := bind.WaitMined(context.Background(), client, tx13)
+	if err != nil {
+		log.Fatalf("WaitMined failed: %v", err)
+	}
+	if receipt13.Status == 0 {
+		log.Fatal("Transaction reverted")
+	}
+	fmt.Printf("✅ Withdraw success, Gas used: %d\n", receipt13.GasUsed)
 
 	//Decrypt CT using pay-per buyer's RK and attribute key AK
 	recoverSymKey := DT.PerDecrypt(abePath, MPK, CT, RK, sku, AK)
@@ -256,7 +330,24 @@ func main() {
 		fmt.Printf("Message=%v\n", string(Mes))
 	}
 
-	//Subscribe Phase
+	//==========================================Subscribe Phase====================================================//
+	//Buyer sends the subscription-based transaction
+	subFee := new(big.Int)
+	subFee.SetString("10000000000000000", 10)
+	auth14 := utils.Transact(client, buyerKey, subFee)
+	tx14, err := Contract.Subscribe(auth14, sellerAddress)
+	if err != nil {
+		log.Fatalf("❌ Subscribe failed: %v", err)
+	}
+	receipt14, err := bind.WaitMined(context.Background(), client, tx14)
+	if err != nil {
+		log.Fatalf("❌ WaitMined failed: %v", err)
+	}
+	if receipt14.Status == 0 {
+		log.Fatal("❌ Transaction reverted")
+	}
+	fmt.Printf("✅ Subscribe Function, Gas used: %d\n", receipt14.GasUsed)
+
 	//Seller computes subscription key RK
 	SK := DT.SubKeyGen(SPK, SSK, pku)
 	//Check the validation of RK
@@ -278,9 +369,26 @@ func main() {
 	fmt.Printf("🌳 SubKeyVer Gas used: %d\n", receipt7.GasUsed)
 	verSK, _ := Contract.GetSKResult(&bind.CallOpts{})
 	fmt.Printf("The Verification results of SubKey is %v\n", verSK)
+
+	//Seller withdraw the payment after passing the verification
+	auth15 := utils.Transact(client, sellerKey, big.NewInt(0))
+	tx15, err := Contract.SubWithdraw(auth15, buyerAddress)
+	if err != nil {
+		log.Fatalf("❌ SubWithdraw failed: %v", err)
+	}
+
+	receipt15, err := bind.WaitMined(context.Background(), client, tx15)
+	if err != nil {
+		log.Fatalf("❌ WaitMined failed: %v", err)
+	}
+
+	if receipt15.Status == 0 {
+		log.Fatal("❌ Transaction reverted")
+	}
+	fmt.Printf("✅ SubWithdraw Function, Gas used: %d\n", receipt15.GasUsed)
+
 	//Decrypt CT using subscription buyer's RK and attribute key AK
 	recoverSymKey = DT.SubDecrypt(abePath, MPK, SPK, CT, matrix, SK, sku, AK)
-
 	if !Operation.GTEqual(SymKey, recoverSymKey) {
 		fmt.Printf("decryption failed: SymKey mismatch\noriginal: %v\nrecovered: %v", SymKey, recoverSymKey)
 	} else {
