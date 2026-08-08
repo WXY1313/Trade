@@ -298,4 +298,15 @@ func main() {
 		log.Fatal("Fial to excute transaction")
 	}
 	fmt.Printf("🌳 SubKeyVer Gas used: %d\n", receipt7.GasUsed)
-	verSK, _ := contract.GetRKRe
+	verSK, _ := contract.GetRKResult(&bind.CallOpts{})
+	fmt.Printf("The Verification results of SubKey is %v\n", verSK)
+	//Decrypt CT using subscription buyer's RK and attribute key AK
+	recoverSymKey = DT.SubDecrypt(path, MPK, SPK, CT, matrix, SK, sku, AK)
+
+	if !Operation.GTEqual(SymKey, recoverSymKey) {
+		fmt.Printf("decryption failed: SymKey mismatch\noriginal: %v\nrecovered: %v", SymKey, recoverSymKey)
+	} else {
+		Mes := SymEnc.XOREncryptDecrypt(ct, SymEnc.KDF(recoverSymKey))
+		fmt.Printf("Message=%v\n", string(Mes))
+	}
+}
