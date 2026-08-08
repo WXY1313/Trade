@@ -8,9 +8,11 @@ import (
 	"math/big"
 	"sort"
 
-	"Trade/compile/contract"
+	"github.com/WXY1313/Trade/Crypto/CPABE/node"
+	contract "github.com/WXY1313/Trade/gen"
+	"github.com/ethereum/go-ethereum/crypto"
 
-	bn256 "github.com/ethereum/go-ethereum/crypto/bn256/cloudflare"
+	"github.com/fentec-project/bn256"
 	"github.com/fentec-project/gofe/data"
 	"github.com/fentec-project/gofe/sample"
 )
@@ -102,6 +104,7 @@ func G1PointToG1(g1point contract.TradeG1Point) (*bn256.G1, error) {
 func G2ToG2Point(point *bn256.G2) contract.TradeG2Point {
 	// Marshal the G1 point to get the X and Y coordinates as bytes
 	pointBytes := point.Marshal()
+	//fmt.Println(point.Marshal())
 
 	// Create big.Int for X and Y coordinates
 	a1 := new(big.Int).SetBytes(pointBytes[:32])
@@ -110,29 +113,11 @@ func G2ToG2Point(point *bn256.G2) contract.TradeG2Point {
 	b2 := new(big.Int).SetBytes(pointBytes[96:128])
 
 	g2Point := contract.TradeG2Point{
-		X: [2]*big.Int{a1, a2},
-		Y: [2]*big.Int{b1, b2},
+		X: [2]*big.Int{a2, a1},
+		Y: [2]*big.Int{b2, b1},
 	}
 	return g2Point
 }
-
-// func G2ToG2Point(point *bn256.G2) contract.TradeG2Point {
-// 	// Marshal the G1 point to get the X and Y coordinates as bytes
-// 	pointBytes := point.Marshal()
-// 	//fmt.Println(point.Marshal())
-
-// 	// Create big.Int for X and Y coordinates
-// 	a1 := new(big.Int).SetBytes(pointBytes[:32])
-// 	a2 := new(big.Int).SetBytes(pointBytes[32:64])
-// 	b1 := new(big.Int).SetBytes(pointBytes[64:96])
-// 	b2 := new(big.Int).SetBytes(pointBytes[96:128])
-
-// 	g2Point := contract.TradeG2Point{
-// 		X: [2]*big.Int{a1, a2},
-// 		Y: [2]*big.Int{b1, b2},
-// 	}
-// 	return g2Point
-// }
 
 func G2PointToG2(g2point contract.TradeG2Point) (*bn256.G2, error) {
 	// 将 X 和 Y 中的每个元素转换为字节数组
@@ -217,4 +202,37 @@ func G1ToBigIntArray(point *bn256.G1) [2]*big.Int {
 	y := new(big.Int).SetBytes(pointBytes[32:64])
 
 	return [2]*big.Int{x, y}
+}
+
+// 1. 定义转换函数
+// 这个函数将 *node.Node 树转换为 []Contract.TradeNodeInput 切片
+func ConvertTreeToInputs(n *node.Node) []contract.TradeNodeInput {
+	var inputs []contract.TradeNodeInput
+
+	// 将当前节点转换为 Contract.TradeNodeInput
+	// 将属性字符串转换为 [32]byte
+	attrHash := [32]byte(crypto.Keccak256Hash([]byte(n.Attribute))) // 直接类型转换
+
+	var childrenIds []*big.Int
+	for _, child := range n.Children {
+		childrenIds = append(childrenIds, child.Idx)
+	}
+
+	inputNode := contract.TradeNodeInput{
+		Id:          n.Idx, // 确保 Id 对应 Go 中 Node 的 Idx
+		IsLeaf:      n.IsLeaf,
+		Threshold:   big.NewInt(int64(n.T)), // n.T 是 int 类型，需要转为 *big.Int
+		Idx:         n.Idx,
+		Attribute:   attrHash,
+		ChildrenIds: childrenIds,
+	}
+	inputs = append(inputs, inputNode)
+
+	// 递归转换所有子节点
+	for _, child := range n.Children {
+		childInputs := ConvertTreeToInputs(child)
+		inputs = append(inputs, childInputs...)
+	}
+
+	return inputs
 }

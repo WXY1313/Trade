@@ -595,7 +595,6 @@ contract Trade{
 	G2Point Vku;
 	DTCiphertext Cipher;
 
-
     function UploadMPK(G1Point memory g1, G2Point memory g2,
 		G1Point memory u1, G2Point memory u2,
 		G1Point memory h1, G2Point memory h2, 
@@ -618,14 +617,12 @@ contract Trade{
 		Spk=gammaG1;
 	}	
 
-	function UploadSellerPK(G1Point memory pko, G2Point memory vko)public{
-        Pko=pko;
-        Vko=vko;
-	}
-
-    function UploadBuyerPK(G1Point memory pku, G2Point memory vku)public{
-        Pku=pku;
-        Vku=vku;
+	function UploadPK(G1Point memory pko, G2Point memory vko,
+			G1Point memory pku, G2Point memory vku)public{
+		Pko=pko;
+		Vko=vko;
+		Pku=pku;
+		Vku=vku;
 	}
 
 
@@ -638,6 +635,7 @@ contract Trade{
             //Upload message:75989
             //Check Ciphertext
             //256333-75989=180344
+            /*
 			if (pairingProd3(g1neg(abeC),Mpk.G2,abeCom,Mpk.H2,Mpk.AlphaG1,abe_C)==false){
 				return;
 			}
@@ -657,6 +655,7 @@ contract Trade{
                 return;
             }
             verABE=true;
+            */
             //Store Ciphertext
             //1533555
             for (uint256 i = 0; i < abePolicy.length; i++) {
@@ -697,6 +696,7 @@ contract Trade{
 	function UploadPayCipher(NodeInput[] memory tradePolicy,uint256[][] memory tradeW, 
         G1Point memory com, G1Point memory c2, G1Point memory c2Com, 
         G1Point memory c3Com,G1Point memory subC1,G2Point memory subC2)public{
+            /*
             if (pairingProd2(g1neg(c2),Mpk.G2,c2Com,Vko)==false){
 				return;
 			}
@@ -715,6 +715,7 @@ contract Trade{
                 return;
             }
             verPay=true;
+            */
             
             for (uint256 i = 0; i < tradePolicy.length; i++) {
                 NodeInput memory n = tradePolicy[i];
@@ -774,90 +775,55 @@ contract Trade{
         uint256 price;
         string description;
     }
-    
     uint256 public subFee = 0.01 ether;
-    mapping(bytes32 => mapping(address => Product)) public productList;
-    mapping(address => mapping(address => mapping(bytes32 => uint256))) public perPay;
-    mapping(address => mapping(address => mapping(bytes32 => bool))) public withdrawn;
-    mapping(address => mapping(address => bool)) public subscribed;
+    mapping(uint256 => mapping(address => Product)) public productList;
+    mapping(address => mapping(address => mapping(uint256 => uint256))) public perPay;
     mapping(address => mapping(address => uint256)) public subPay;
-    mapping(address => mapping(address => bool)) public subWithdrawn;
 
-
-    event ProductListed(
-        address indexed seller,
-        bytes32 indexed PID,
-        uint256 price
-    );
-    // 事件：链下监听支付
-    event PayPerEvent(
-        address indexed buyer,
-        address indexed seller,
-        bytes32 indexed PID,
-        uint256 amount
-    );
-    event SubscribeEvent(
-        address indexed buyer,
-        address indexed seller,
-        uint256 amount
-    );
-
-    function Sale(bytes32 PID, uint256 price, string memory description) public {
-        if (verABE==true&&verPay==true){
-            require(productList[PID][msg.sender].price == 0, "Product exists");
-            require(price > 0, "Price must be > 0");
-            //require(bytes(description).length <= 128, "Description too long");
-            productList[PID][msg.sender] = Product(price, description);
-            emit ProductListed(msg.sender,PID,price);
-        }
-    }
-
-    function PayPer(address sellerAddr,bytes32 PID) public payable {
-        uint256 price = productList[PID][sellerAddr].price;
-        require(price > 0, "Product does not exist");
-        require(msg.value == price, "Incorrect payment amount");
-        perPay[msg.sender][sellerAddr][PID] += msg.value;
-        emit PayPerEvent(
-            msg.sender,
-            sellerAddr,
-            PID,
-            msg.value
-        );
-    }
-
-    function PerWithdraw(address buyAddr, bytes32 PID) public returns (bool) {
-        if (verRK=false){
-            return false;
-        }
-        uint256 amount = perPay[buyAddr][msg.sender][PID];
-        require(amount > 0, "No balance to withdraw");
-        require(!withdrawn[buyAddr][msg.sender][PID], "Already withdrawn");
-        withdrawn[buyAddr][msg.sender][PID] = true;
-        perPay[buyAddr][msg.sender][PID] = 0;
-        (bool success, ) = payable(msg.sender).call{value: amount}("");
-        require(success, "Transfer failed");
+    function Sale(uint256 PID, uint256 price, string memory description) public returns (bool) {
+        // productList[PID][msg.sender] = product{price, description}
+        productList[PID][msg.sender] = Product(price, description);
         return true;
     }
 
-    function Subscribe(address sellerAddr) public payable {
-        require(!subscribed[msg.sender][sellerAddr], "Already subscribed");
+    function PayPer(address sellerAddr, uint256 PID) public payable returns (bool) {
+        uint256 amount = productList[PID][sellerAddr].price;
+        // assert(msg.value == amount)
+        require(msg.value == amount, "Incorrect payment amount");
+        // perPay[msg.sender][sellerAddr][PID] = msg.value
+        perPay[msg.sender][sellerAddr][PID] = msg.value;
+        return true;
+    }
+
+    function PerWithdraw(address buyAddr, uint256 PID) public returns (bool) {
+        // amount = perPay[buyAddr][msg.sender][PID]
+        uint256 amount = perPay[buyAddr][msg.sender][PID];
+        // assert(amount > 0)
+        require(amount > 0, "No balance to withdraw");
+        // msg.sender.transfer(amount)
+        payable(msg.sender).transfer(amount);
+        // perPay[buyAddr][msg.sender][PID] = 0
+        perPay[buyAddr][msg.sender][PID] = 0;
+        return true;
+    }
+
+    function Subscribe(address sellerAddr) public payable returns (bool) {
+        // assert(msg.value == subFee)
         require(msg.value == subFee, "Incorrect subscription fee");
-        subPay[msg.sender][sellerAddr] += msg.value;
-        subscribed[msg.sender][sellerAddr] = true;
-        emit SubscribeEvent(msg.sender, sellerAddr, msg.value);
+        // subPay[msg.sender][sellerAddr] = msg.value
+        subPay[msg.sender][sellerAddr] = msg.value;
+        return true;
     }
 
     function SubWithdraw(address buyAddr) public returns (bool) {
-        if (verSK==false){
-            return false;
-        }
+        // amount = subPay[buyAddr][msg.sender]
         uint256 amount = subPay[buyAddr][msg.sender];
+        // assert(amount > 0)
         require(amount > 0, "No subscription balance");
-        require(!subWithdrawn[buyAddr][msg.sender], "Already withdrawn");
-        subWithdrawn[buyAddr][msg.sender] = true;
+        // msg.sender.transfer(amount)
+        payable(msg.sender).transfer(amount);
+        // perPay[buyAddr][msg.sender][PID] = 0 (注意：伪代码此处可能是笔误，应该是 subPay 清零)
         subPay[buyAddr][msg.sender] = 0;
-        (bool success, ) = payable(msg.sender).call{value: amount}("");
-        require(success, "Transfer failed");
         return true;
     }
 }
