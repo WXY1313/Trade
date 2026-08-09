@@ -8,7 +8,7 @@ import (
 	"math/big"
 	"os"
 
-	gen "github.com/WXY1313/Trade/gen"
+	gen "Trade/compile/contract"
 
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/accounts/keystore"

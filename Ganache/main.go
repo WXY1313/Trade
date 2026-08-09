@@ -3,97 +3,63 @@ package main
 
 import (
 	"context"
-	"crypto/ecdsa"
 	"crypto/rand"
 	"fmt"
 	"log"
 	"math/big"
-	"os"
 	"strconv"
 
+	"Ganache/utils"
 	DT "Trade/Compare/Ours"
 	"Trade/Crypto/CPABE/lsss"
 	"Trade/Crypto/CPABE/node"
 	"Trade/Crypto/Operation"
 	"Trade/Crypto/SymEnc"
-	Contract "Trade/compile/contract"
+	"Trade/compile/contract"
 
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
-	"github.com/ethereum/go-ethereum/accounts/keystore"
+	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto"
 	bn256 "github.com/ethereum/go-ethereum/crypto/bn256/cloudflare"
 	"github.com/ethereum/go-ethereum/ethclient"
 )
 
-const sepoliaChainID = 11155111
-
 func main() {
-	ctx := context.Background()
-	rpcURL := requiredEnv("SEPOLIA_RPC_URL")
-	walletPassword := requiredEnv("SEPOLIA_WALLET_PASSWORD")
-	walletPath := os.Getenv("SEPOLIA_WALLET_PATH")
-	if walletPath == "" {
-		walletPath = "./wallet/UTC--2025-05-29T13-51-04.984946200Z--9dda53414c9a26b1054427718cd991ec14bd5fd4"
+	//Deploy the smart contract
+	contract_name := "Trade"
+	client, err := ethclient.Dial("http://127.0.0.1:8545")
+	if err != nil {
+		log.Fatalf("Failed to connect to the Ethereum client: %v", err)
 	}
 
-	walletData, err := os.ReadFile(walletPath)
-	if err != nil {
-		log.Fatalf("Read wallet file %q failed: %v", walletPath, err)
-	}
-	key, err := keystore.DecryptKey(walletData, walletPassword)
-	if err != nil {
-		log.Fatalf("Decrypt wallet failed: %v", err)
-	}
+	privatekey := utils.GetENV("PRIVATE_KEY_1")
 
-	client, err := ethclient.DialContext(ctx, rpcURL)
-	if err != nil {
-		log.Fatalf("Connect to Sepolia RPC failed: %v", err)
-	}
-	defer client.Close()
+	auth := utils.Transact(client, privatekey, big.NewInt(0))
 
-	chainID, err := client.ChainID(ctx)
-	if err != nil {
-		log.Fatalf("Obtain chain ID failed: %v", err)
-	}
-	if chainID.Cmp(big.NewInt(sepoliaChainID)) != 0 {
-		log.Fatalf("Refusing to deploy: RPC chain ID is %s, expected Sepolia (%d)", chainID, sepoliaChainID)
-	}
+	// 打印账户余额
+	fromAddress := auth.From
+	balance, err := client.BalanceAt(context.Background(), fromAddress, nil)
+	fmt.Printf("Deploy account balance: %s wei\n", balance.String())
 
-	deployer := crypto.PubkeyToAddress(key.PrivateKey.PublicKey)
-	balance, err := client.BalanceAt(ctx, deployer, nil)
+	address, tx := utils.Deploy(client, contract_name, auth)
+	receipt, err := bind.WaitMined(context.Background(), client, tx)
 	if err != nil {
-		log.Fatalf("Obtain deployer balance failed: %v", err)
+		log.Fatalf("Tx receipt failed: %v", err)
 	}
-	fmt.Printf("Sepolia deployer: %s\n", deployer.Hex())
-	fmt.Printf("Sepolia balance: %s wei\n", balance.String())
-	if balance.Sign() == 0 {
-		log.Fatal("Sepolia deployer has no ETH; fund it before deployment")
-	}
-
-	auth := newTransactor(key.PrivateKey, chainID, ctx)
-	address, tx, contractInstance, err := Contract.DeployContract(auth, client)
-	if err != nil {
-		log.Fatalf("Submit contract deployment failed: %v", err)
-	}
-	fmt.Printf("Deployment transaction: %s\n", tx.Hash().Hex())
-	receipt, err := bind.WaitMined(ctx, client, tx)
-	if err != nil {
-		log.Fatalf("Wait for contract deployment failed: %v", err)
-	}
-	if receipt.Status != 1 {
-		log.Fatalf("Contract deployment reverted (tx %s)", tx.Hash().Hex())
-	}
-	fmt.Printf("Contract deployed on Sepolia: %s\n", address.Hex())
 	fmt.Printf("Deploy Gas used: %d\n", receipt.GasUsed)
 
-	fmt.Printf("Contract=%v\n", contractInstance)
+	Contract, err := contract.NewContract(common.HexToAddress(address.Hex()), client)
+	if err != nil {
+		fmt.Println(err)
+	}
+	fmt.Printf("%v\n", Contract)
 
 	//======================================System Initialization=====================================//
 	//Setup Phase
 	MPK, MSK, SPK, SSK := DT.Setup()
 
-	var hxsG1 []Contract.TradeG1Point
-	var hxsG2 []Contract.TradeG2Point
+	var hxsG1 []contract.TradeG1Point
+	var hxsG2 []contract.TradeG2Point
 	var attrHxs [][32]byte
 	for at, value := range MPK.HXsG1 {
 		attrHxs = append(attrHxs, crypto.Keccak256Hash([]byte(at)))
@@ -102,32 +68,20 @@ func main() {
 	}
 
 	//KGC Sends UploadMPK transaction
-	auth1 := newTransactor(key.PrivateKey, chainID, ctx)
-	tx1, err := contractInstance.UploadMPK(auth1, Operation.G1ToG1Point(MPK.G1), Operation.G2ToG2Point(MPK.G2),
+	auth1 := utils.Transact(client, privatekey, big.NewInt(0))
+	tx1, err := Contract.UploadMPK(auth1, Operation.G1ToG1Point(MPK.G1), Operation.G2ToG2Point(MPK.G2),
 		Operation.G1ToG1Point(MPK.U1), Operation.G2ToG2Point(MPK.U2), Operation.G1ToG1Point(MPK.H1),
 		Operation.G2ToG2Point(MPK.H2), Operation.G1ToG1Point(MPK.AlphaG1), attrHxs, hxsG1, hxsG2)
-	if err != nil {
-		log.Fatalf("Fail to invoke UploadMPK: %v", err)
-	}
-	receipt1, err := bind.WaitMined(ctx, client, tx1)
-	if err != nil {
-		log.Fatalf("Fail to confirm UploadMPK: %v", err)
-	}
+	receipt1, err := bind.WaitMined(context.Background(), client, tx1)
 	if receipt1.Status == 0 {
 		log.Fatal("Fial to excute transaction")
 	}
 	fmt.Printf("🌳 UploadMPK Gas used: %d\n", receipt1.GasUsed)
 
 	//Seller uploads the master key pair SPK
-	auth2 := newTransactor(key.PrivateKey, chainID, ctx)
-	tx2, err := contractInstance.UploadSPK(auth2, Operation.G1ToG1Point(SPK.GammaG1))
-	if err != nil {
-		log.Fatalf("Fail to invoke UploadSPK: %v", err)
-	}
-	receipt2, err := bind.WaitMined(ctx, client, tx2)
-	if err != nil {
-		log.Fatalf("Fail to confirm UploadSPK: %v", err)
-	}
+	auth2 := utils.Transact(client, privatekey, big.NewInt(0))
+	tx2, err := Contract.UploadSPK(auth2, Operation.G1ToG1Point(SPK.GammaG1))
+	receipt2, err := bind.WaitMined(context.Background(), client, tx2)
 	if receipt2.Status == 0 {
 		log.Fatal("Fial to excute transaction")
 	}
@@ -143,11 +97,11 @@ func main() {
 	pku := new(bn256.G1).ScalarMult(MPK.G1, sku)
 	vku := new(bn256.G2).ScalarMult(MPK.G2, sku)
 	//Seller and buyer sends their public key respectively
-	auth3 := newTransactor(key.PrivateKey, chainID, ctx)
+	auth3 := utils.Transact(client, privatekey, big.NewInt(0))
 	if err != nil {
 		log.Fatalf("Fail to build transaction signature: %v", err)
 	}
-	tx3, err := contractInstance.UploadPK(auth3, Operation.G1ToG1Point(pko), Operation.G2ToG2Point(vko), Operation.G1ToG1Point(pku), Operation.G2ToG2Point(vku))
+	tx3, err := Contract.UploadPK(auth3, Operation.G1ToG1Point(pko), Operation.G2ToG2Point(vko), Operation.G1ToG1Point(pku), Operation.G2ToG2Point(vku))
 	if err != nil {
 		log.Fatalf("Fail to invoke UploadPK: %v", err)
 	}
@@ -200,17 +154,16 @@ func main() {
 	for _, at := range attrSet {
 		abeQ[at] = CT.C1.C3[at]
 	}
-	abeW, abeRowNodes, err := lsss.Convert(abeRoot, abeQ)
-	if err != nil {
-		log.Fatalf("Build ABE reconstruction data failed: %v", err)
-	}
-	abeRowMap := node.ConvertNodesToNodeInputs(abeRowNodes)
+	abeW, abe_RowMap, _ := lsss.Convert(abeRoot, abeQ)
+	abeRowMap := node.ConvertNodesToNodeInputs(abe_RowMap)
 
 	//Convert ABE Ciphertext
-	var abeC1 []Contract.TradeG1Point
-	var abeC2 []Contract.TradeG1Point
-	var abeC3 []Contract.TradeG1Point
+	var abeC1 []contract.TradeG1Point
+	var abeC2 []contract.TradeG1Point
+	var abeC3 []contract.TradeG1Point
+	var abeAttr [][32]byte
 	for _, at := range node.RowToAttrib(abeRoot) {
+		abeAttr = append(abeAttr, crypto.Keccak256Hash([]byte(at)))
 		abeC1 = append(abeC1, Operation.G1ToG1Point(CT.C1.C1[at]))
 		abeC2 = append(abeC2, Operation.G1ToG1Point(CT.C1.C2[at]))
 		abeC3 = append(abeC3, Operation.G1ToG1Point(CT.C1.C3[at]))
@@ -220,19 +173,21 @@ func main() {
 		abePathAttr = append(abePathAttr, crypto.Keccak256Hash([]byte(at)))
 	}
 
-	tradePolicy := node.ConvertTreeToInputs(CT.Policy)
-	tradeQ := map[string]*bn256.G1{
-		"buy": CT.C1.Com,
-		"per": CT.C2Com,
-	}
-	tradeW, tradeRowMap, err := lsss.Convert(CT.Policy, tradeQ)
-	if err != nil {
-		log.Fatalf("Build Trade-policy reconstruction data failed: %v", err)
-	}
-
 	//===========================================================================================//
-	auth4 := newTransactor(key.PrivateKey, chainID, ctx)
-	tx4, err := contractInstance.UploadABECipher(auth4, abeW, abeRowMap, abePathAttr, abePolicy,
+	//Ciphetext Check
+	tradePolicy := node.ConvertTreeToInputs(CT.Policy)
+	tradeQ := make(map[string]*bn256.G1)
+	var tradePathAttr [][32]byte
+	tradePathAttr = append(tradePathAttr, crypto.Keccak256Hash([]byte("buy")))
+	tradePathAttr = append(tradePathAttr, crypto.Keccak256Hash([]byte("per")))
+	tradeQ["buy"] = CT.C1.Com
+	tradeQ["per"] = CT.C2Com
+	tradeW, _, _ := lsss.Convert(CT.Policy, tradeQ)
+	auth4 := utils.Transact(client, privatekey, big.NewInt(0))
+	if err != nil {
+		log.Fatalf("Fail to build transaction signature: %v", err)
+	}
+	tx4, err := Contract.UploadABECipher(auth4, abeW, abeRowMap, abePathAttr, abePolicy,
 		Operation.G1ToG1Point(CT.C1.Com), Operation.G1ToG1Point(CT.C1.C), Operation.G2ToG2Point(CT.C1.C_),
 		abeC1, abeC2, abeC3)
 	if err != nil {
@@ -245,17 +200,16 @@ func main() {
 	if receipt4.Status == 0 {
 		log.Fatal("Fial to excute transaction")
 	}
-	fmt.Printf("🌳 UploadABECipher Gas used: %d\n", receipt4.GasUsed)
-	verABE, err := contractInstance.GetABEResult(&bind.CallOpts{Context: ctx})
-	if err != nil {
-		log.Fatalf("Read ABE verification result failed: %v", err)
-	}
+	fmt.Printf("🌳 ABECipherCheck Gas used: %d\n", receipt4.GasUsed)
+	verABE, _ := Contract.GetABEResult(&bind.CallOpts{})
 	fmt.Printf("The ABE Ciphertext is %v\n", verABE)
 
-	auth5 := newTransactor(key.PrivateKey, chainID, ctx)
-	tx5, err := contractInstance.UploadPayCipher(auth5, tradePolicy, tradeW, Operation.G1ToG1Point(CT.Com),
-		Operation.G1ToG1Point(CT.C2), Operation.G1ToG1Point(CT.C2Com), Operation.G1ToG1Point(CT.C3.Com),
-		Operation.G1ToG1Point(CT.C3.C1), Operation.G2ToG2Point(CT.C3.C2))
+	auth5 := utils.Transact(client, privatekey, big.NewInt(0))
+	if err != nil {
+		log.Fatalf("Fail to build transaction signature: %v", err)
+	}
+	tx5, err := Contract.UploadPayCipher(auth5, tradePolicy, tradeW, Operation.G1ToG1Point(CT.Com), Operation.G1ToG1Point(CT.C2), Operation.G1ToG1Point(CT.C2Com),
+		Operation.G1ToG1Point(CT.C3.Com), Operation.G1ToG1Point(CT.C3.C1), Operation.G2ToG2Point(CT.C3.C2))
 	if err != nil {
 		log.Fatalf("Fail to invoke UploadPayCipher: %v", err)
 	}
@@ -267,22 +221,18 @@ func main() {
 		log.Fatal("Fial to excute transaction")
 	}
 	fmt.Printf("🌳 UploadPayCipher Gas used: %d\n", receipt5.GasUsed)
-	verPay, err := contractInstance.GetPayResult(&bind.CallOpts{Context: ctx})
-	if err != nil {
-		log.Fatalf("Read Pay verification result failed: %v", err)
-	}
+	verPay, _ := Contract.GetPayResult(&bind.CallOpts{})
 	fmt.Printf("The Pay Ciphertext is %v\n", verPay)
-	fmt.Printf("Ciphertext is %v\n", DT.EncVer(MPK, SPK, CT, vko, abePath, tradeW, tradeRowMap, tradeQ))
 
 	//Pay-per Phase
 	//Seller computes re-encrypted key RK
 	RK := DT.ReKeyGen(MPK, CT, sko, pko, pku)
 	//Check the validation of RK
-	auth6 := newTransactor(key.PrivateKey, chainID, ctx)
+	auth6 := utils.Transact(client, privatekey, big.NewInt(0))
 	if err != nil {
 		log.Fatalf("Fail to build transaction signature: %v", err)
 	}
-	tx6, err := contractInstance.ReKeyVer(auth6, Operation.G1ToG1Point(RK.D1), Operation.G1ToG1Point(RK.D2))
+	tx6, err := Contract.ReKeyVer(auth6, Operation.G1ToG1Point(RK.D1), Operation.G1ToG1Point(RK.D2))
 	if err != nil {
 		log.Fatalf("Fail to invoke ReKeyVer: %v", err)
 	}
@@ -294,7 +244,7 @@ func main() {
 		log.Fatal("Fial to excute transaction")
 	}
 	fmt.Printf("🌳 ReKeyVer Gas used: %d\n", receipt6.GasUsed)
-	verRK, _ := contractInstance.GetRKResult(&bind.CallOpts{})
+	verRK, _ := Contract.GetRKResult(&bind.CallOpts{})
 	fmt.Printf("The Verification results of ReKey is %v\n", verRK)
 
 	//Decrypt CT using pay-per buyer's RK and attribute key AK
@@ -310,11 +260,11 @@ func main() {
 	//Seller computes subscription key RK
 	SK := DT.SubKeyGen(SPK, SSK, pku)
 	//Check the validation of RK
-	auth7 := newTransactor(key.PrivateKey, chainID, ctx)
+	auth7 := utils.Transact(client, privatekey, big.NewInt(0))
 	if err != nil {
 		log.Fatalf("Fail to build transaction signature: %v", err)
 	}
-	tx7, err := contractInstance.SubKeyVer(auth7, Operation.G1ToG1Point(SK.SK1), Operation.G1ToG1Point(SK.SK2))
+	tx7, err := Contract.SubKeyVer(auth7, Operation.G1ToG1Point(SK.SK1), Operation.G1ToG1Point(SK.SK2))
 	if err != nil {
 		log.Fatalf("Fail to invoke SubKeyVer: %v", err)
 	}
@@ -322,11 +272,11 @@ func main() {
 	if err != nil {
 		log.Fatalf("Fail to ensure transaction: %v", err)
 	}
-	if receipt7.Status == 0 {
+	if receipt6.Status == 0 {
 		log.Fatal("Fial to excute transaction")
 	}
 	fmt.Printf("🌳 SubKeyVer Gas used: %d\n", receipt7.GasUsed)
-	verSK, _ := contractInstance.GetSKResult(&bind.CallOpts{})
+	verSK, _ := Contract.GetSKResult(&bind.CallOpts{})
 	fmt.Printf("The Verification results of SubKey is %v\n", verSK)
 	//Decrypt CT using subscription buyer's RK and attribute key AK
 	recoverSymKey = DT.SubDecrypt(abePath, MPK, SPK, CT, matrix, SK, sku, AK)
@@ -337,21 +287,4 @@ func main() {
 		Mes := SymEnc.XOREncryptDecrypt(ct, SymEnc.KDF(recoverSymKey))
 		fmt.Printf("Message=%v\n", string(Mes))
 	}
-}
-
-func requiredEnv(name string) string {
-	value := os.Getenv(name)
-	if value == "" {
-		log.Fatalf("Required environment variable %s is not set", name)
-	}
-	return value
-}
-
-func newTransactor(privateKey *ecdsa.PrivateKey, chainID *big.Int, ctx context.Context) *bind.TransactOpts {
-	auth, err := bind.NewKeyedTransactorWithChainID(privateKey, chainID)
-	if err != nil {
-		log.Fatalf("Build transaction signer failed: %v", err)
-	}
-	auth.Context = ctx
-	return auth
 }

@@ -21,11 +21,11 @@ Version: 0.8.25-develop
 
 # File description
 
-* `main.go`   run this file to test the functionalities of the framework.
+* `main.go`   run this file to test the functionalities of the framework on Ganache.
 
-* `compile/contract/`  The folder stores contract source code file (.sol) and generated go contract file.
+* `../compile/contract/` stores the shared contract source and generated Go binding used by Ganache and Sepolia.
 
-* `compile/compile.sh`  The script file compiles solidity and generates go contract file.
+* `../compile/compile.sh` compiles Solidity and generates the shared Go contract binding.
 
 * `genPrvKey.sh`  The script file generates accounts and stores in the`.env` file.
 #########
@@ -48,10 +48,12 @@ Version: 0.8.25-develop
     ganache --mnemonic "Trade" -l 90071992547 -e 1000
     ```
 
-3. Compile the smart contract code
+3. Compile the shared smart contract code
 
     ```bash
+    cd ../compile
     bash compile.sh
+    cd ../Ganache
     ```
 
 4. Run the main.go

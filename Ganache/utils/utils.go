@@ -22,12 +22,12 @@ import (
 // deploy contract and obtain abi interface and bin of source code
 func Deploy(client *ethclient.Client, contract_name string, auth *bind.TransactOpts) (common.Address, *types.Transaction) {
 
-	abiBytes, err := os.ReadFile("compile/contract/" + contract_name + ".abi")
+	abiBytes, err := os.ReadFile("../compile/contract/" + contract_name + ".abi")
 	if err != nil {
 		log.Fatalf("Failed to read ABI file: %v", err)
 	}
 
-	bin, err := os.ReadFile("compile/contract/" + contract_name + ".bin")
+	bin, err := os.ReadFile("../compile/contract/" + contract_name + ".bin")
 	if err != nil {
 		log.Fatalf("Failed to read BIN file: %v", err)
 	}

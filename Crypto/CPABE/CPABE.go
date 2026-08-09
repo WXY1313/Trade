@@ -8,7 +8,7 @@ import (
 	"Trade/Crypto/CPABE/lsss"
 	"Trade/Crypto/CPABE/node"
 	"Trade/Crypto/Operation"
-	"Trade/Crypto/RScode"
+	"Trade/Crypto/RSCode"
 
 	bn256 "github.com/ethereum/go-ethereum/crypto/bn256/cloudflare"
 	"github.com/fentec-project/gofe/data"

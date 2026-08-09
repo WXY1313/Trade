@@ -635,7 +635,6 @@ contract Trade{
             //Upload message:75989
             //Check Ciphertext
             //256333-75989=180344
-            /*
 			if (pairingProd3(g1neg(abeC),Mpk.G2,abeCom,Mpk.H2,Mpk.AlphaG1,abe_C)==false){
 				return;
 			}
@@ -655,7 +654,6 @@ contract Trade{
                 return;
             }
             verABE=true;
-            */
             //Store Ciphertext
             //1533555
             for (uint256 i = 0; i < abePolicy.length; i++) {
@@ -696,7 +694,6 @@ contract Trade{
 	function UploadPayCipher(NodeInput[] memory tradePolicy,uint256[][] memory tradeW, 
         G1Point memory com, G1Point memory c2, G1Point memory c2Com, 
         G1Point memory c3Com,G1Point memory subC1,G2Point memory subC2)public{
-            /*
             if (pairingProd2(g1neg(c2),Mpk.G2,c2Com,Vko)==false){
 				return;
 			}
@@ -715,7 +712,6 @@ contract Trade{
                 return;
             }
             verPay=true;
-            */
             
             for (uint256 i = 0; i < tradePolicy.length; i++) {
                 NodeInput memory n = tradePolicy[i];
